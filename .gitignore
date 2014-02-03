@@ -1,4 +1,5 @@
 /packages/
+!/packages/repositories.conf
 bin/
 obj/
 *.suo
@@ -6,3 +7,4 @@ obj/
 *.ncrunchproject
 *.user
 _NCrunch_*/
+
