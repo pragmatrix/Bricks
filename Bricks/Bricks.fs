@@ -1,4 +1,4 @@
-﻿namespace Bricks
+﻿module Bricks
 
 open System
 open FSharpx.Collections
@@ -12,10 +12,13 @@ type Environment = { values: HashMap<Brick, obj> }
     with 
         member this.add b v =
             { this with values = this.values.Add(b, v) }
+        static member empty = 
+            { values = PersistentHashMap.Empty() }
 
 type Dependency = Brick * Brick
 
 type ComputationContext = { env: Environment; newDeps: Dependency list }
+    with static member empty = { env = Environment.empty; newDeps = []}
 
 and ComputationResult<'v> = 'v * ComputationContext
 
@@ -32,7 +35,7 @@ type Brick<'v>(f : Computation<'v>) =
             let v, ctx = f ctx
             v, { ctx with env = ctx.env.add this v }
 
-type BrickBuilder<'v> =
+type BrickBuilder() =
     member this.Bind (dependency: Brick<'dep>, cont: 'dep -> Brick<'next>) : Brick<'next> =
         let f = fun ctx ->
             let v, ctx = dependency.resolve ctx;
@@ -40,4 +43,6 @@ type BrickBuilder<'v> =
             let v, ctx = contBrick.resolve ctx
             v, { ctx with newDeps = (contBrick :> Brick, dependency :> Brick) :: ctx.newDeps }
         Brick<'next>(f)
-    
+    member this.Return value = Brick(fun ctx -> value, ctx)
+
+let brick = new BrickBuilder()
