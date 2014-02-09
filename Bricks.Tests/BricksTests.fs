@@ -6,7 +6,7 @@ open NUnit.Framework
 open FsUnit
 
 [<TestFixture>]
-type BasicTests() =
+type BrickTests() =
 
     let a = brick { return 3 }
     let b = brick { return 5 }
@@ -24,12 +24,21 @@ type BasicTests() =
         r |> should equal 15
 
     [<Test>]
-    member this.tracksDependencies() = 
+    member this.collectsTraces() = 
         let ctx = ComputationContext.empty
         let ctx = c.resolve ctx |> snd
         printf "%A" ctx
         // note that c itself is not dependent on a / b directly.
-        ctx.newDeps |> List.map snd |> should equal [a; b]
+        ctx.traces |> List.map snd |> should equal [[a]; [b]]
+
+    [<Test>]
+    member this.noMoreTracesOnSecondEvaluation() =
+        let ctx = ComputationContext.empty
+        let ctxb = c.resolve ctx |> snd
+        let ctxc = c.resolve ctxb |> snd
+        printf "%A" ctx
+        // note that c itself is not dependent on a / b directly.
+        ctxc.traces |> should equal ctxb.traces
 
 (*
     [<Test>]
