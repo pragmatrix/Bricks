@@ -84,6 +84,8 @@ let private flattenList l = List.collect id l
 let private addTrace (map: HashMap<Brick, Brick list>) (trace: Trace) =
     map.Add(fst trace, snd trace)
 
+type Write = Brick * (obj option)
+
 type Program = 
     { 
         env: Environment; 
@@ -92,15 +94,25 @@ type Program =
 
         // pending traces
         newTraces: Trace list list;
+        // pending writes
+        newWrites: Write list;
     }
     with
-        member this.set (brick: Brick<'v>, value: 'v) =
-            let this = this.invalidate brick
-            let env = this.env.add brick value
-            { this with env = env }
+        member this.write (brick: Brick<'v>, value: 'v) =
+            { this with newWrites = (brick :> Brick, Some (value :> obj)) :: this.newWrites }
 
-        member this.invalidate (brick : Brick) = 
-            this.invalidate [brick]
+        member this.reset brick = 
+            { this with newWrites = (brick, None) :: this.newWrites }
+
+        member this.commitWrites = 
+            let this = this.newWrites |> List.map fst |> this.invalidate
+            let commitValue (env:Environment) (b, vo)  =
+                match vo with
+                | Some v -> env.add b v
+                | None -> env
+
+            let env = this.newWrites |> List.fold commitValue this.env
+            { this with env = env; newWrites = [] }
 
         member this.invalidate (bricks : Brick list) =
             let rec invalidateRec program (bricks : Brick list) = 
@@ -132,7 +144,7 @@ type Program =
             let referrer = brick |> referrer.Remove
             { this with env = env; traces = traces; referrer = referrer }
 
-        static member empty = { env = Environment.empty; traces = HashMap.Empty; referrer = HashMap.Empty; newTraces = []}
+        static member empty = { env = Environment.empty; traces = HashMap.Empty; referrer = HashMap.Empty; newTraces = []; newWrites = []}
 
 
 (* Transaction
@@ -155,12 +167,19 @@ type TransactionBuilder() =
 
     member this.Zero () = id
     member this.Yield _ = id
+    member this.Run : ProgramM = 
+        fun p -> p.commitWrites
 
     [<CustomOperation("set", MaintainsVariableSpace = true)>]
     member this.Set(nested : ProgramM, brick: Brick<'v>, value: 'v) =
         fun (p: Program) ->
-            p.set (brick, value)
+            p.write (brick, value)
             
+    [<CustomOperation("reset", MaintainsVariableSpace = true)>]
+    member this.Reset(nested: ProgramM, brick : Brick) =
+        fun (p: Program) ->
+            p.reset brick
+
 and ProgramM = Program -> Program
 
 type private PPAttribute = ProjectionParameterAttribute
