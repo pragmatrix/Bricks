@@ -169,28 +169,46 @@ type TransactionBuilder() =
 
     member this.Zero () = id
     member this.Yield _ = id
-    member this.Run : Transaction = 
-        fun p -> p.commitWrites
+
+    member this.Run (t : Transaction): Transaction = 
+        fun p -> 
+            let p = t p
+            p.commitWrites
+
+//    member this.Return p = p
+
+    member this.For(seq : Transaction, cont: unit -> Transaction) : Transaction =
+        printf "t:for %A\n" seq
+        fun p ->
+            let p = seq p
+            cont() p
 
     [<CustomOperation("set", MaintainsVariableSpace = true)>]
     member this.Set(nested : Transaction, brick: Brick<'v>, value: 'v) =
+        printf "t:set\n"
         fun (p: Program) ->
+            let p = nested p
+            printf "t:calling write %A\n" value
             p.write (brick, value)
             
     [<CustomOperation("reset", MaintainsVariableSpace = true)>]
     member this.Reset(nested: Transaction, brick : Brick) =
+        printf "t:reset\n"
         fun (p: Program) ->
+            let p = nested p
+            printf "t:calling reset\n"
             p.reset brick
 
-type private PPAttribute = ProjectionParameterAttribute
+let transaction = new TransactionBuilder()
 
 type ProgramM = Program -> Program
 
 type ProgramBuilder() =
-    (* right now we do not support integrating other processes *)
-    (* regular Bind is the isolated evaluation of a root brick in the context of the process *)
+
+    (* A regular let! is the isolated evaluation of a root brick in the context of the process *)
 
     member this.Bind (brick: Brick<'value>, cont: 'value -> ProgramM) : ProgramM = 
+        printf "bind %A\n" brick
         fun p ->
             let ctx = ComputationContext.fromEnv p.env
             let v, ctx = brick.resolve ctx
@@ -199,7 +217,19 @@ type ProgramBuilder() =
             cont v p
 
     member this.Zero () = id
+    member this.Yield _ = id
 
+    member this.For(seq : ProgramM, cont: unit -> ProgramM) : ProgramM =
+        fun p ->
+            let p = seq p
+            cont() p
+
+    [<CustomOperation("apply", MaintainsVariableSpace = true)>]
+    member this.Apply(nested : ProgramM, transaction: Transaction) = 
+        printf "apply\n"
+        fun p ->
+            let p = nested p
+            transaction p
 
 let program = new ProgramBuilder()
 
