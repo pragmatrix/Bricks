@@ -152,12 +152,14 @@ type Program =
     A transaction can evaluate brick values and set new brick values.
 
     Inside a transaction, evaluating brick values always resolve to the
-    previous state of the brick, never to the reality of the values that are
-    changed by the transaction.
+    previous state of the brick, never to the values that are changed by 
+    the transaction.
 *)
 
+type Transaction = Program -> Program
+
 type TransactionBuilder() =
-    member this.Bind (brick: Brick<'value>, cont: 'value -> ProgramM) : ProgramM = 
+    member this.Bind (brick: Brick<'value>, cont: 'value -> Transaction) : Transaction = 
         fun p ->
             let ctx = ComputationContext.fromEnv p.env
             let v, ctx = brick.resolve ctx
@@ -167,22 +169,22 @@ type TransactionBuilder() =
 
     member this.Zero () = id
     member this.Yield _ = id
-    member this.Run : ProgramM = 
+    member this.Run : Transaction = 
         fun p -> p.commitWrites
 
     [<CustomOperation("set", MaintainsVariableSpace = true)>]
-    member this.Set(nested : ProgramM, brick: Brick<'v>, value: 'v) =
+    member this.Set(nested : Transaction, brick: Brick<'v>, value: 'v) =
         fun (p: Program) ->
             p.write (brick, value)
             
     [<CustomOperation("reset", MaintainsVariableSpace = true)>]
-    member this.Reset(nested: ProgramM, brick : Brick) =
+    member this.Reset(nested: Transaction, brick : Brick) =
         fun (p: Program) ->
             p.reset brick
 
-and ProgramM = Program -> Program
-
 type private PPAttribute = ProjectionParameterAttribute
+
+type ProgramM = Program -> Program
 
 type ProgramBuilder() =
     (* right now we do not support integrating other processes *)
