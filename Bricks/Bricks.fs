@@ -94,6 +94,14 @@ type Program =
         newTraces: Trace list list;
     }
     with
+        member this.set (brick: Brick<'v>, value: 'v) =
+            let this = this.invalidate brick
+            let env = this.env.add brick value
+            { this with env = env }
+
+        member this.invalidate (brick : Brick) = 
+            this.invalidate [brick]
+
         member this.invalidate (bricks : Brick list) =
             let rec invalidateRec program (bricks : Brick list) = 
                 match bricks with
@@ -150,11 +158,9 @@ type TransactionBuilder() =
 
     [<CustomOperation("set", MaintainsVariableSpace = true)>]
     member this.Set(nested : ProgramM, brick: Brick<'v>, value: 'v) =
-        fun p ->
-            let p = nested p
-            printf "setting value of brick"
-            p
-
+        fun (p: Program) ->
+            p.set (brick, value)
+            
 and ProgramM = Program -> Program
 
 type private PPAttribute = ProjectionParameterAttribute
