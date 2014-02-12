@@ -3,12 +3,12 @@
 open System
 open System.Diagnostics
 open System.Collections.Immutable
-open FSharpx.Collections
 
 (* *)
 
 type HashSet = ImmutableHashSet
 type HashSet<'k> = ImmutableHashSet<'k>
+type 'k set = HashSet<'k>
 
 type HashMap = ImmutableDictionary
 type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
@@ -19,6 +19,7 @@ module List =
 (* Brick, Referrer, Environment *)
 
 type Brick = interface end
+
 
 type private ReferrerMap = HashMap<Brick, HashSet<Brick> >
 
@@ -71,6 +72,8 @@ type Brick<'v>(f : Computation<'v>) =
             let v = res.value
             let newEnv = res.env.add this (v:>obj, res.trace)
             newEnv, v
+
+type 't brick = Brick<'t>
 
 type BrickBuilder() =
     member this.Bind (dependency: Brick<'dep>, cont: 'dep -> Brick<'next>) : Brick<'next> =

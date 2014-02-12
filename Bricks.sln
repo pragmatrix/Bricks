@@ -14,6 +14,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".nuget", ".nuget", "{9E23DB
 		.nuget\NuGet.targets = .nuget\NuGet.targets
 	EndProjectSection
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Bricks.UI", "Bricks.UI\Bricks.UI.fsproj", "{A78A0613-85ED-48F7-814E-B8ED121AE779}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Bricks.UI.Tests", "Bricks.UI.Tests\Bricks.UI.Tests.fsproj", "{C264A5AF-3CEE-4BFD-A7D1-D554E0F69975}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,6 +32,14 @@ Global
 		{A2125B87-771D-47FE-A31E-3B4958E010B3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A2125B87-771D-47FE-A31E-3B4958E010B3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A2125B87-771D-47FE-A31E-3B4958E010B3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A78A0613-85ED-48F7-814E-B8ED121AE779}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A78A0613-85ED-48F7-814E-B8ED121AE779}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A78A0613-85ED-48F7-814E-B8ED121AE779}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A78A0613-85ED-48F7-814E-B8ED121AE779}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C264A5AF-3CEE-4BFD-A7D1-D554E0F69975}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C264A5AF-3CEE-4BFD-A7D1-D554E0F69975}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C264A5AF-3CEE-4BFD-A7D1-D554E0F69975}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C264A5AF-3CEE-4BFD-A7D1-D554E0F69975}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
