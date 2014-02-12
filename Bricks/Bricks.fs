@@ -184,7 +184,7 @@ type ProgramM = Program -> Program
 
 type ProgramBuilder() =
 
-    (* A regular let! is the isolated evaluation of a root brick in the context of the process *)
+    (* A regular let! is the isolated evaluation of a root brick in the context of the program *)
 
     member this.Bind (brick: Brick<'value>, cont: 'value -> ProgramM) : ProgramM = 
         fun p ->
