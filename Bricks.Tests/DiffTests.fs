@@ -5,21 +5,17 @@ open FsUnit
 
 open Bricks
 
+(*
 type DiffTests() =
     
-    let a = brick { return 3 }
-    let b = brick { return 5 }
-    let c = brick {
-        let! a = a
-        let! b = b
-        return a * b
-    }
+    let a = brick { return set.empty }
+    let b = brick { return! a }
 
     [<Test>]
     member this.transactionSet() =
         
         let t = transaction {
-            set a 4
+            write a (set.ofSeq [1;2;3;4])
         }
         
         let p = program {
@@ -31,3 +27,4 @@ type DiffTests() =
         }
 
         p Program.empty |> ignore
+*)

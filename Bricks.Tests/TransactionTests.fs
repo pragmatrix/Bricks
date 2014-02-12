@@ -20,7 +20,7 @@ type ProcessTests() =
     member this.transactionSet() =
         
         let t = transaction {
-            set a 4
+            write a 4
         }
         
         let p = program {
@@ -37,7 +37,7 @@ type ProcessTests() =
     [<Test>]
     member this.transactionReset() =
         let t = transaction {
-            set a 4
+            write a 4
         }
 
         let rt = transaction {

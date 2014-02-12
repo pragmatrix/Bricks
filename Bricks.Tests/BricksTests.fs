@@ -15,6 +15,7 @@ type BrickTests() =
         let! b = b
         return a * b
     }
+    let d = brick { return! c }
 
     [<Test>]
     member this.simpleEvaluation() =
@@ -30,3 +31,7 @@ type BrickTests() =
         printf "%A" env
         // note that c itself is not dependent on a / b directly but on an internal continuation brick.
         env.values.[c] |> snd |> fun a -> a.Length |> should equal 1
+
+    [<Test>]
+    member this.returnFromCreatesANewBrick() =
+        obj.ReferenceEquals(c, d) |> should equal false

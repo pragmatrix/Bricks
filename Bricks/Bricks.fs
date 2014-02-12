@@ -9,6 +9,9 @@ open System.Collections.Immutable
 type HashSet = ImmutableHashSet
 type HashSet<'k> = ImmutableHashSet<'k>
 type 'k set = HashSet<'k>
+module set = 
+    let empty<'e> = HashSet<'e>.Empty
+    let ofSeq = HashSet.CreateRange
 
 type HashMap = ImmutableDictionary
 type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
@@ -75,15 +78,28 @@ type Brick<'v>(f : Computation<'v>) =
 
 type 't brick = Brick<'t>
 
+let private makeBrick f = Brick<_>(f)
+
 type BrickBuilder() =
+    (* tbd: instead of chaining the computation expression internal closure bricks, we could combine them *)
     member this.Bind (dependency: 'dep brick, cont: 'dep -> 'next brick) : 'next brick =
-        let f = fun env ->
+        fun env ->
             let env, depValue = dependency.evaluate env;
             let contBrick = cont depValue
             let env, value = contBrick.evaluate env
             { env = env; trace = [dependency]; value = value }
-        Brick<'next>(f)
-    member this.Return value = Brick(fun env -> { env = env; trace = []; value = value })
+        |> makeBrick
+
+    (* need to wrap this in a new brick here, to allow a shadow write later on *)
+    member this.ReturnFrom (brick: 'value brick) = 
+        fun env ->
+            let env, value = brick.evaluate env;
+            { env = env; trace = [brick]; value = value }
+        |> makeBrick
+
+    member this.Return value = 
+        fun env -> { env = env; trace = []; value = value }
+        |> makeBrick
 
 let brick = new BrickBuilder()
 
@@ -94,9 +110,7 @@ type Write = Brick * (obj option)
 type Program = 
     { 
         env: Environment; 
-
-        // pending writes
-        newWrites: Write list;
+        pendingWrites: Write list;
     }
     with
         member this.evaluate (brick: 'v brick) : Program * 'v = 
@@ -104,10 +118,10 @@ type Program =
             { this with env = env }, v
 
         member this.write (brick: 'v brick, value: 'v) =
-            { this with newWrites = (brick :> Brick, Some (value :> obj)) :: this.newWrites }
+            { this with pendingWrites = (brick :> Brick, Some (value :> obj)) :: this.pendingWrites }
 
         member this.reset brick = 
-            { this with newWrites = (brick, None) :: this.newWrites }
+            { this with pendingWrites = (brick, None) :: this.pendingWrites }
 
         member this.commitWrites = 
             let commitValue (this:Program) (brick, vo)  =
@@ -117,8 +131,8 @@ type Program =
                 | None -> this
                 | Some v -> {this with env = env.add brick (v, []) }
 
-            let this = this.newWrites |> List.fold commitValue this
-            { this with newWrites = [] }
+            let this = this.pendingWrites |> List.fold commitValue this
+            { this with pendingWrites = [] }
 
         member this.invalidate (bricks : Brick list) =
             let rec invalidateRec this (bricks : Brick list) = 
@@ -134,7 +148,7 @@ type Program =
 
             bricks |> invalidateRec this
 
-        static member empty = { env = Environment.empty; newWrites = []}
+        static member empty = { env = Environment.empty; pendingWrites = []}
 
 
 (* Transaction
@@ -169,8 +183,8 @@ type TransactionBuilder() =
             let p = seq p
             cont() p
 
-    [<CustomOperation("set", MaintainsVariableSpace = true)>]
-    member this.Set(nested : Transaction, brick: 'v brick, value: 'v) =
+    [<CustomOperation("write", MaintainsVariableSpace = true)>]
+    member this.Write(nested : Transaction, brick: 'v brick, value: 'v) =
         fun (p: Program) ->
             let p = nested p
             p.write (brick, value)
