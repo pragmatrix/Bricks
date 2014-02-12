@@ -162,25 +162,20 @@ type TransactionBuilder() =
 //    member this.Return p = p
 
     member this.For(seq : Transaction, cont: unit -> Transaction) : Transaction =
-        printf "t:for %A\n" seq
         fun p ->
             let p = seq p
             cont() p
 
     [<CustomOperation("set", MaintainsVariableSpace = true)>]
     member this.Set(nested : Transaction, brick: Brick<'v>, value: 'v) =
-        printf "t:set\n"
         fun (p: Program) ->
             let p = nested p
-            printf "t:calling write %A\n" value
             p.write (brick, value)
             
     [<CustomOperation("reset", MaintainsVariableSpace = true)>]
     member this.Reset(nested: Transaction, brick : Brick) =
-        printf "t:reset\n"
         fun (p: Program) ->
             let p = nested p
-            printf "t:calling reset\n"
             p.reset brick
 
 let transaction = new TransactionBuilder()
@@ -192,7 +187,6 @@ type ProgramBuilder() =
     (* A regular let! is the isolated evaluation of a root brick in the context of the process *)
 
     member this.Bind (brick: Brick<'value>, cont: 'value -> ProgramM) : ProgramM = 
-        printf "bind %A\n" brick
         fun p ->
             let p, v = p.evaluate brick
             cont v p
@@ -207,7 +201,6 @@ type ProgramBuilder() =
 
     [<CustomOperation("apply", MaintainsVariableSpace = true)>]
     member this.Apply(nested : ProgramM, transaction: Transaction) = 
-        printf "apply\n"
         fun p ->
             let p = nested p
             transaction p
