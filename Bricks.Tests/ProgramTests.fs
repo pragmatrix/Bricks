@@ -5,29 +5,16 @@ open NUnit.Framework
 open FsUnit
 
 
-(*
-
-
 [<TestFixture>]
-type ProcessTests() =
-
-    let a = brick { return 3 }
-    let b = brick { return 5 }
-    let cb = brick {
-        let! a = a
-        let! b = b
-        return a * b
-    }
+type ProgramTests() =
 
     [<Test>]
-    member this.invalidationTest() =
-        let p = program {
-            let! cv = cb
-            printf "%A" cv
-            set cb 4
+    member this.properlyInvalidatesBrick() =
+        let b = brick {
+            return 3;
         }
-
-        p Program.empty
-        true |> should equal true
-
-*)
+        let p = Program.empty
+        let p,_ = p.evaluate b
+        p.env.values.ContainsKey b |> should equal true
+        let p = p.invalidate [b]
+        p.env.values.ContainsKey b |> should equal false

@@ -15,7 +15,7 @@ type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
 
 type Brick = interface end
 
-type Environment = { values: HashMap<Brick, obj> }
+type Environment = { values: HashMap<Brick, obj * Brick list> }
     with 
         member this.add b v =
             { this with values = this.values.Add(b, v) }
@@ -24,37 +24,32 @@ type Environment = { values: HashMap<Brick, obj> }
         static member empty = 
             { values = ImmutableDictionary.Empty }
 
-type Trace = Brick * Brick list
+type ComputationResult<'v> = { env: Environment; trace: Brick list; value: 'v }
 
-type ComputationContext = { env: Environment; traces: Trace list }
-    with 
-        static member empty = { env = Environment.empty; traces = []}
-        static member fromEnv env = { env = env; traces = []}
-
-and ComputationResult<'v> = 'v * ComputationContext
-
-type Computation<'v> = ComputationContext -> ComputationResult<'v>
+type Computation<'v> = Environment -> ComputationResult<'v>
 
 type Brick<'v>(f : Computation<'v>) =
     interface Brick
     with 
-        member this.resolve ctx = 
-            let values = ctx.env.values
+        member this.evaluate (env:Environment) : Environment * 'v = 
+            let values = env.values
             if values.ContainsKey this then
-                values.[this] :?>'v, ctx
+                env, values.[this] |> fst :?>'v
             else
-            let v, ctx = f ctx
-            v, { ctx with env = ctx.env.add this v }
+            let res = f env
+            let v = res.value
+            let newEnv = res.env.add this (v:>obj, res.trace)
+            newEnv, v
 
 type BrickBuilder() =
     member this.Bind (dependency: Brick<'dep>, cont: 'dep -> Brick<'next>) : Brick<'next> =
-        let f = fun ctx ->
-            let v, ctx = dependency.resolve ctx;
-            let contBrick = cont v
-            let v, ctx = contBrick.resolve ctx
-            v, { ctx with traces = (contBrick :> Brick, [ dependency ]) :: ctx.traces }
+        let f = fun env ->
+            let env, depValue = dependency.evaluate env;
+            let contBrick = cont depValue
+            let env, value = contBrick.evaluate env
+            { env = env; trace = [dependency]; value = value }
         Brick<'next>(f)
-    member this.Return value = Brick(fun ctx -> value, ctx)
+    member this.Return value = Brick(fun env -> { env = env; trace = []; value = value })
 
 let brick = new BrickBuilder()
 
@@ -79,25 +74,24 @@ let private trace2Referrers trace =
     let invalidationTarget = fst trace
     snd trace |> List.map (fun dependency -> dependency, invalidationTarget)
 
-let private flattenList l = List.collect id l
-
-let private addTrace (map: HashMap<Brick, Brick list>) (trace: Trace) =
-    map.Add(fst trace, snd trace)
+module List =
+    let flatten l = List.collect id l
 
 type Write = Brick * (obj option)
 
 type Program = 
     { 
         env: Environment; 
-        traces: HashMap<Brick, Brick list>
         referrer: ReferrerMap; 
 
-        // pending traces
-        newTraces: Trace list list;
         // pending writes
         newWrites: Write list;
     }
     with
+        member this.evaluate (brick: Brick<'v>) : Program * 'v = 
+            let env,v = brick.evaluate this.env
+            { this with env = env }, v
+
         member this.write (brick: Brick<'v>, value: 'v) =
             { this with newWrites = (brick :> Brick, Some (value :> obj)) :: this.newWrites }
 
@@ -105,46 +99,37 @@ type Program =
             { this with newWrites = (brick, None) :: this.newWrites }
 
         member this.commitWrites = 
-            let this = this.newWrites |> List.map fst |> this.invalidate
-            let commitValue (env:Environment) (b, vo)  =
+            let commitValue (this:Program) (brick, vo)  =
+                let this = this.invalidate [brick]
+                let env = this.env
                 match vo with
-                | Some v -> env.add b v
-                | None -> env
+                | None -> this
+                | Some v -> {this with env = env.add brick (v, []) }
 
-            let env = this.newWrites |> List.fold commitValue this.env
-            { this with env = env; newWrites = [] }
+            let this = this.newWrites |> List.fold commitValue this
+            { this with newWrites = [] }
 
         member this.invalidate (bricks : Brick list) =
-            let rec invalidateRec program (bricks : Brick list) = 
+            let rec invalidateRec this (bricks : Brick list) = 
                 match bricks with
-                | [] -> program
+                | [] -> this
                 | brick::rest ->
-                let hasBrick, brickTrace = program.traces.TryGetValue brick
-                if not hasBrick then invalidateRec program rest else
-                let referrer = this.referrer.[brick] |> Seq.toList
-                let this = this.removeBrick brick referrer brickTrace
+                let hasBrick, (value, trace) = this.env.values.TryGetValue brick
+                if not hasBrick then invalidateRec this rest else
+                let hasReferrer, referrer = this.referrer.TryGetValue brick
+                let referrer = if hasReferrer then referrer |> Seq.toList else []
+                let this = this.removeBrick brick referrer trace
                 invalidateRec this (rest @ referrer)
 
-            let this = this.integrateTraces
             bricks |> invalidateRec this
 
-        member private this.integrateTraces = 
-            if this.newTraces = [] then this else
-            let newTraces = this.newTraces |> flattenList
-            let traces = newTraces |> List.fold addTrace this.traces
-            let referrer = newTraces |> List.map trace2Referrers |> flattenList
-            let referrer = referrer |> List.fold addReferrer this.referrer
-            { this with referrer = referrer; traces = traces; newTraces = [] }
-
         member private this.removeBrick brick referrer trace = 
-            assert (this.newTraces = [])
             let env = brick |> this.env.remove
-            let traces = brick |> this.traces.Remove
             let referrer = trace |> List.fold (fun refs dep -> removeReferrer refs dep brick) this.referrer
             let referrer = brick |> referrer.Remove
-            { this with env = env; traces = traces; referrer = referrer }
+            { this with env = env; referrer = referrer }
 
-        static member empty = { env = Environment.empty; traces = HashMap.Empty; referrer = HashMap.Empty; newTraces = []; newWrites = []}
+        static member empty = { env = Environment.empty; referrer = HashMap.Empty; newWrites = []}
 
 
 (* Transaction
@@ -161,11 +146,8 @@ type Transaction = Program -> Program
 type TransactionBuilder() =
     member this.Bind (brick: Brick<'value>, cont: 'value -> Transaction) : Transaction = 
         fun p ->
-            let ctx = ComputationContext.fromEnv p.env
-            let v, ctx = brick.resolve ctx
-            let newTraces = ctx.traces
-            let p = { p with newTraces = newTraces :: p.newTraces}
-            cont v p
+            let p, value = p.evaluate brick
+            cont value p
 
     member this.Zero () = id
     member this.Yield _ = id
@@ -210,10 +192,7 @@ type ProgramBuilder() =
     member this.Bind (brick: Brick<'value>, cont: 'value -> ProgramM) : ProgramM = 
         printf "bind %A\n" brick
         fun p ->
-            let ctx = ComputationContext.fromEnv p.env
-            let v, ctx = brick.resolve ctx
-            let newTraces = ctx.traces
-            let p = { p with newTraces = newTraces :: p.newTraces}
+            let p, v = p.evaluate brick
             cont v p
 
     member this.Zero () = id

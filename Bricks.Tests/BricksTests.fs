@@ -19,35 +19,14 @@ type BrickTests() =
     [<Test>]
     member this.simpleEvaluation() =
 
-        let ctx = ComputationContext.empty
-        let r = c.resolve ctx |> fst
+        let env = Environment.empty
+        let _,r = c.evaluate env
         r |> should equal 15
 
     [<Test>]
     member this.collectsTraces() = 
-        let ctx = ComputationContext.empty
-        let ctx = c.resolve ctx |> snd
-        printf "%A" ctx
-        // note that c itself is not dependent on a / b directly.
-        ctx.traces |> List.map snd |> should equal [[a]; [b]]
-
-    [<Test>]
-    member this.noMoreTracesOnSecondEvaluation() =
-        let ctx = ComputationContext.empty
-        let ctxb = c.resolve ctx |> snd
-        let ctxc = c.resolve ctxb |> snd
-        printf "%A" ctx
-        // note that c itself is not dependent on a / b directly.
-        ctxc.traces |> should equal ctxb.traces
-
-(*
-    [<Test>]
-    member this.inputChanged() =
-        let ctx = ComputationContext.empty
-        let r = c.resolve ctx
-        r |> ignore
-
-*)
-
-
-
+        let env = Environment.empty
+        let env,_ = c.evaluate env
+        printf "%A" env
+        // note that c itself is not dependent on a / b directly but on an internal continuation brick.
+        env.values.[c] |> snd |> fun a -> a.Length |> should equal 1
