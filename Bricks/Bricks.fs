@@ -15,14 +15,40 @@ type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
 
 type Brick = interface end
 
-type Environment = { values: HashMap<Brick, obj * Brick list> }
+type private ReferrerMap = HashMap<Brick, HashSet<Brick> >
+
+let private addReferrer (map : ReferrerMap) (brick:Brick) referrer =
+    let hasSet, set = map.TryGetValue referrer
+    if hasSet then
+        map.SetItem(referrer, set.Add brick)
+    else
+        map.Add(referrer, HashSet.Create brick)
+
+let private removeReferrer (map : ReferrerMap) brick referrer = 
+    let hasReferrer, set = map.TryGetValue referrer
+    if not hasReferrer then map else
+    map.SetItem(referrer, set.Remove brick)
+
+type Environment = 
+    {
+        values: HashMap<Brick, obj * Brick list>;
+        referrer: ReferrerMap    
+    }
     with 
-        member this.add b v =
-            { this with values = this.values.Add(b, v) }
-        member this.remove b = 
-            { this with values = this.values.Remove b }
+        member this.add brick value =
+            let _,trace = value
+            let referrer = trace |> List.fold (fun refs -> addReferrer refs brick) this.referrer
+            let values = this.values.Add(brick, value)
+            { this with values = values; referrer = referrer}
+        
+        member this.remove brick = 
+            let _,trace = this.values.[brick]
+            let referrer = trace |> List.fold (fun referrer dep -> removeReferrer referrer brick dep) this.referrer
+            let referrer = brick |> referrer.Remove
+            let values = this.values.Remove brick
+            { this with values = values; referrer = referrer }
         static member empty = 
-            { values = ImmutableDictionary.Empty }
+            { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty }
 
 type ComputationResult<'v> = { env: Environment; trace: Brick list; value: 'v }
 
@@ -55,24 +81,7 @@ let brick = new BrickBuilder()
 
 (* Program *)
 
-type private ReferrerMap = HashMap<Brick, HashSet<Brick> >
 
-let private addReferrer (map : ReferrerMap) (referrer: Brick * Brick) =
-    let key = fst referrer
-    let value = snd referrer
-    let hasSet, set = map.TryGetValue key
-    if hasSet then
-        map.Add(key, set.Add value)
-    else
-        map.Add(key, HashSet.Create value)
-
-let private removeReferrer (map : ReferrerMap) brick referrer = 
-    let set = map.[referrer].Remove brick
-    map.Add (referrer, set)
-
-let private trace2Referrers trace = 
-    let invalidationTarget = fst trace
-    snd trace |> List.map (fun dependency -> dependency, invalidationTarget)
 
 module List =
     let flatten l = List.collect id l
@@ -82,7 +91,6 @@ type Write = Brick * (obj option)
 type Program = 
     { 
         env: Environment; 
-        referrer: ReferrerMap; 
 
         // pending writes
         newWrites: Write list;
@@ -116,20 +124,14 @@ type Program =
                 | brick::rest ->
                 let hasBrick, (value, trace) = this.env.values.TryGetValue brick
                 if not hasBrick then invalidateRec this rest else
-                let hasReferrer, referrer = this.referrer.TryGetValue brick
+                let hasReferrer, referrer = this.env.referrer.TryGetValue brick
                 let referrer = if hasReferrer then referrer |> Seq.toList else []
-                let this = this.removeBrick brick referrer trace
+                let this = { this with env = this.env.remove brick }
                 invalidateRec this (rest @ referrer)
 
             bricks |> invalidateRec this
 
-        member private this.removeBrick brick referrer trace = 
-            let env = brick |> this.env.remove
-            let referrer = trace |> List.fold (fun refs dep -> removeReferrer refs dep brick) this.referrer
-            let referrer = brick |> referrer.Remove
-            { this with env = env; referrer = referrer }
-
-        static member empty = { env = Environment.empty; referrer = HashMap.Empty; newWrites = []}
+        static member empty = { env = Environment.empty; newWrites = []}
 
 
 (* Transaction
