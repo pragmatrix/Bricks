@@ -5,13 +5,18 @@ open System.Diagnostics
 open System.Collections.Immutable
 open FSharpx.Collections
 
+(* *)
+
 type HashSet = ImmutableHashSet
 type HashSet<'k> = ImmutableHashSet<'k>
 
 type HashMap = ImmutableDictionary
 type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
 
-(* Brick *)
+module List =
+    let flatten l = List.collect id l
+
+(* Brick, Referrer, Environment *)
 
 type Brick = interface end
 
@@ -80,11 +85,6 @@ type BrickBuilder() =
 let brick = new BrickBuilder()
 
 (* Program *)
-
-
-
-module List =
-    let flatten l = List.collect id l
 
 type Write = Brick * (obj option)
 
