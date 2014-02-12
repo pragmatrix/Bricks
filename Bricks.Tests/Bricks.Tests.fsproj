@@ -55,6 +55,7 @@
     <Compile Include="BricksTests.fs" />
     <Compile Include="ProgramTests.fs" />
     <Compile Include="TransactionTests.fs" />
+    <Compile Include="DiffTests.fs" />
     <None Include="packages.config" />
     <None Include="app.config" />
   </ItemGroup>

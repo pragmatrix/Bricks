@@ -1,9 +1,9 @@
 ﻿module ProcessTests
 
-open Bricks
 open NUnit.Framework
 open FsUnit
 
+open Bricks
 
 [<TestFixture>]
 type ProgramTests() =

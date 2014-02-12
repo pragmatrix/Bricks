@@ -21,7 +21,7 @@ module List =
 type Brick = interface end
 
 
-type private ReferrerMap = HashMap<Brick, HashSet<Brick> >
+type private ReferrerMap = HashMap<Brick, Brick set>
 
 let private addReferrer (map : ReferrerMap) (brick:Brick) referrer =
     let hasSet, set = map.TryGetValue referrer
@@ -76,7 +76,7 @@ type Brick<'v>(f : Computation<'v>) =
 type 't brick = Brick<'t>
 
 type BrickBuilder() =
-    member this.Bind (dependency: Brick<'dep>, cont: 'dep -> Brick<'next>) : Brick<'next> =
+    member this.Bind (dependency: 'dep brick, cont: 'dep -> 'next brick) : 'next brick =
         let f = fun env ->
             let env, depValue = dependency.evaluate env;
             let contBrick = cont depValue
@@ -99,11 +99,11 @@ type Program =
         newWrites: Write list;
     }
     with
-        member this.evaluate (brick: Brick<'v>) : Program * 'v = 
+        member this.evaluate (brick: 'v brick) : Program * 'v = 
             let env,v = brick.evaluate this.env
             { this with env = env }, v
 
-        member this.write (brick: Brick<'v>, value: 'v) =
+        member this.write (brick: 'v brick, value: 'v) =
             { this with newWrites = (brick :> Brick, Some (value :> obj)) :: this.newWrites }
 
         member this.reset brick = 
@@ -149,7 +149,7 @@ type Program =
 type Transaction = Program -> Program
 
 type TransactionBuilder() =
-    member this.Bind (brick: Brick<'value>, cont: 'value -> Transaction) : Transaction = 
+    member this.Bind (brick: 'value brick, cont: 'value -> Transaction) : Transaction = 
         fun p ->
             let p, value = p.evaluate brick
             cont value p
@@ -170,7 +170,7 @@ type TransactionBuilder() =
             cont() p
 
     [<CustomOperation("set", MaintainsVariableSpace = true)>]
-    member this.Set(nested : Transaction, brick: Brick<'v>, value: 'v) =
+    member this.Set(nested : Transaction, brick: 'v brick, value: 'v) =
         fun (p: Program) ->
             let p = nested p
             p.write (brick, value)
@@ -189,7 +189,7 @@ type ProgramBuilder() =
 
     (* A regular let! is the isolated evaluation of a root brick in the context of the program *)
 
-    member this.Bind (brick: Brick<'value>, cont: 'value -> ProgramM) : ProgramM = 
+    member this.Bind (brick: 'value brick, cont: 'value -> ProgramM) : ProgramM = 
         fun p ->
             let p, v = p.evaluate brick
             cont v p
@@ -209,5 +209,9 @@ type ProgramBuilder() =
             transaction p
 
 let program = new ProgramBuilder()
+
+(* Diffs *)
+
+
 
 
