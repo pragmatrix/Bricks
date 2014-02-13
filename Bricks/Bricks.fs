@@ -38,24 +38,51 @@ let private removeReferrer (map : ReferrerMap) brick referrer =
     if not hasReferrer then map else
     map.SetItem(referrer, set.Remove brick)
 
-type Environment = 
+let defaultInvalidator env _ = env
+
+type BrickInvalidator = Environment -> Brick -> Environment
+
+and EvaluationResult = 
+    { value: obj; trace: Brick list; invalidator: BrickInvalidator }
+
+and Environment = 
     {
-        values: HashMap<Brick, obj * Brick list>;
+        values: HashMap<Brick, EvaluationResult>;
         referrer: ReferrerMap    
     }
     with 
-        member this.add brick value =
-            let _,trace = value
+        member this.add brick result =
+            let {trace=trace;value=value} = result
             let referrer = trace |> List.fold (fun refs -> addReferrer refs brick) this.referrer
-            let values = this.values.Add(brick, value)
+            let values = this.values.Add(brick, result)
             { this with values = values; referrer = referrer}
         
-        member this.remove brick = 
-            let _,trace = this.values.[brick]
-            let referrer = trace |> List.fold (fun referrer dep -> removeReferrer referrer brick dep) this.referrer
-            let referrer = brick |> referrer.Remove
-            let values = this.values.Remove brick
-            { this with values = values; referrer = referrer }
+         member this.invalidate (bricks : Brick list) =
+            let rec invalidateRec this (bricks : Brick list) = 
+                match bricks with
+                | [] -> this
+                | brick::rest ->
+                let hasBrick, {value=value; trace=trace;invalidator=invalidator} = this.values.TryGetValue brick
+                if not hasBrick then invalidateRec this rest else
+                
+                let hasReferrer, referrer = this.referrer.TryGetValue brick
+                let bricksReferrer = if hasReferrer then referrer |> Seq.toList else []
+                
+                (* before doing anything, call the invalidator *)
+                let this = invalidator this brick
+
+                (* remove all referrer *)
+                let referrer = trace |> List.fold (fun referrer dep -> removeReferrer referrer brick dep) this.referrer
+                let referrer = brick |> referrer.Remove
+
+                (* remove the value *)
+                let values = this.values.Remove brick
+                
+                let this = { this with values = values; referrer = referrer }
+                invalidateRec this (rest @ bricksReferrer)
+
+            bricks |> invalidateRec this
+           
         static member empty = 
             { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty }
 
@@ -69,12 +96,13 @@ type Brick<'v>(f : Computation<'v>) =
         member this.evaluate (env:Environment) : Environment * 'v = 
             let values = env.values
             if values.ContainsKey this then
-                env, values.[this] |> fst :?>'v
+                env, values.[this].value :?> 'v
             else
             let res = f env
             let v = res.value
-            let newEnv = res.env.add this (v:>obj, res.trace)
+            let newEnv = res.env.add this {value = v:>obj; trace = res.trace; invalidator = defaultInvalidator }
             newEnv, v
+              
 
 type 't brick = Brick<'t>
 
@@ -124,30 +152,16 @@ type Program =
             { this with pendingWrites = (brick, None) :: this.pendingWrites }
 
         member this.commitWrites = 
-            let commitValue (this:Program) (brick, vo)  =
-                let this = this.invalidate [brick]
-                let env = this.env
-                match vo with
-                | None -> this
-                | Some v -> {this with env = env.add brick (v, []) }
+            let commitValue (this:Program) (brick, value_)  =
+                let env = this.env.invalidate [brick]
+                match value_ with
+                | None -> {this with env = env}
+                | Some value -> {this with env = env.add brick {value = value; trace = []; invalidator = defaultInvalidator } }
 
             let this = this.pendingWrites |> List.fold commitValue this
             { this with pendingWrites = [] }
 
-        member this.invalidate (bricks : Brick list) =
-            let rec invalidateRec this (bricks : Brick list) = 
-                match bricks with
-                | [] -> this
-                | brick::rest ->
-                let hasBrick, (value, trace) = this.env.values.TryGetValue brick
-                if not hasBrick then invalidateRec this rest else
-                let hasReferrer, referrer = this.env.referrer.TryGetValue brick
-                let referrer = if hasReferrer then referrer |> Seq.toList else []
-                let this = { this with env = this.env.remove brick }
-                invalidateRec this (rest @ referrer)
-
-            bricks |> invalidateRec this
-
+ 
         static member empty = { env = Environment.empty; pendingWrites = []}
 
 

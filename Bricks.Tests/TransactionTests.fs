@@ -46,12 +46,15 @@ type ProcessTests() =
         
         let p = program {
             let! v = c
+            printf "%d\n" v
             v |> should equal 15
             apply t
             let! v = c
+            printf "%d\n" v
             v |> should equal 20
             apply rt
             let! v = c
+            printf "%d\n" v
             v |> should equal 15
         }
 

@@ -6,10 +6,13 @@ open FsUnit
 open Bricks
 
 (*
+
 type DiffTests() =
     
     let a = brick { return set.empty }
-    let b = brick { return! a }
+    let b = brick {
+            let! x = diff a 
+            return x }
 
     [<Test>]
     member this.transactionSet() =
@@ -19,8 +22,8 @@ type DiffTests() =
         }
         
         let p = program {
-            let! v = c
-            v |> should equal 15
+            let! v = b
+            v |> should equal []
             apply t
             let! v = c
             v |> should equal 20
