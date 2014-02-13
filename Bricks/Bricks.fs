@@ -65,8 +65,8 @@ and Environment =
                 let hasBrick, {value=value; trace=trace;invalidator=invalidator} = this.values.TryGetValue brick
                 if not hasBrick then invalidateRec this rest else
                 
-                let hasReferrer, referrer = this.referrer.TryGetValue brick
-                let bricksReferrer = if hasReferrer then referrer |> Seq.toList else []
+                let hasReferrer, bricksReferrer = this.referrer.TryGetValue brick
+                let bricksReferrer = if hasReferrer then bricksReferrer |> Seq.toList else []
                 
                 (* before doing anything, call the invalidator *)
                 let this = invalidator this brick
@@ -138,31 +138,22 @@ type Write = Brick * (obj option)
 type Program = 
     { 
         env: Environment; 
-        pendingWrites: Write list;
     }
     with
         member this.evaluate (brick: 'v brick) : Program * 'v = 
             let env,v = brick.evaluate this.env
             { this with env = env }, v
 
-        member this.write (brick: 'v brick, value: 'v) =
-            { this with pendingWrites = (brick :> Brick, Some (value :> obj)) :: this.pendingWrites }
-
-        member this.reset brick = 
-            { this with pendingWrites = (brick, None) :: this.pendingWrites }
-
-        member this.commitWrites = 
+        member this.commitWrites writes = 
             let commitValue (this:Program) (brick, value_)  =
                 let env = this.env.invalidate [brick]
                 match value_ with
                 | None -> {this with env = env}
                 | Some value -> {this with env = env.add brick {value = value; trace = []; invalidator = defaultInvalidator } }
 
-            let this = this.pendingWrites |> List.fold commitValue this
-            { this with pendingWrites = [] }
-
+            writes |> List.fold commitValue this
  
-        static member empty = { env = Environment.empty; pendingWrites = []}
+        static member empty = { env = Environment.empty }
 
 
 (* Transaction
@@ -174,40 +165,42 @@ type Program =
     the transaction.
 *)
 
-type Transaction = Program -> Program
+type Transaction = Environment * Write list
+type TransactionM = Transaction -> Transaction
 
 type TransactionBuilder() =
-    member this.Bind (brick: 'value brick, cont: 'value -> Transaction) : Transaction = 
-        fun p ->
-            let p, value = p.evaluate brick
-            cont value p
+    member this.Bind (brick: 'value brick, cont: 'value -> TransactionM) : TransactionM = 
+        fun (env, wl) ->
+            let env, value = brick.evaluate env
+            cont value (env, wl)
 
     member this.Zero () = id
     member this.Yield _ = id
 
-    member this.Run (t : Transaction): Transaction = 
+    member this.Run (t : TransactionM): (Program -> Program) = 
         fun p -> 
-            let p = t p
-            p.commitWrites
+            let (env, wl) = t (p.env, [])
+            let p = { p with env = env }
+            wl |> List.rev |> p.commitWrites
 
 //    member this.Return p = p
 
-    member this.For(seq : Transaction, cont: unit -> Transaction) : Transaction =
-        fun p ->
-            let p = seq p
-            cont() p
+    member this.For(seq : TransactionM, cont: unit -> TransactionM) : TransactionM =
+        fun t ->
+            let t = seq t
+            cont() t
 
     [<CustomOperation("write", MaintainsVariableSpace = true)>]
-    member this.Write(nested : Transaction, brick: 'v brick, value: 'v) =
-        fun (p: Program) ->
-            let p = nested p
-            p.write (brick, value)
+    member this.Write(nested : TransactionM, brick: 'v brick, value: 'v) =
+        fun t ->
+            let (env, wl) = nested t
+            (env, (brick :> Brick, Some (value :> obj)) :: wl)
             
     [<CustomOperation("reset", MaintainsVariableSpace = true)>]
-    member this.Reset(nested: Transaction, brick : Brick) =
-        fun (p: Program) ->
-            let p = nested p
-            p.reset brick
+    member this.Reset(nested: TransactionM, brick : Brick) =
+        fun t ->
+            let (env, wl) = nested t
+            (env, (brick, None) :: wl)
 
 let transaction = new TransactionBuilder()
 
@@ -231,7 +224,7 @@ type ProgramBuilder() =
             cont() p
 
     [<CustomOperation("apply", MaintainsVariableSpace = true)>]
-    member this.Apply(nested : ProgramM, transaction: Transaction) = 
+    member this.Apply(nested : ProgramM, transaction: (Program -> Program)) = 
         fun p ->
             let p = nested p
             transaction p

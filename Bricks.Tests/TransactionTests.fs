@@ -6,7 +6,7 @@ open FsUnit
 open Bricks
 
 [<TestFixture>]
-type ProcessTests() =
+type TransactionTests() =
 
     let a = brick { return 3 }
     let b = brick { return 5 }
@@ -33,6 +33,24 @@ type ProcessTests() =
 
         p Program.empty |> ignore
 
+    [<Test>]
+    member this.lastWriteWins() =
+        let t = transaction {
+            write a 3
+            write a 4
+        }
+        
+        let p = program {
+            let! v = c
+            printf "%d\n" v
+            v |> should equal 15
+            apply t
+            let! v = c
+            printf "%d\n" v
+            v |> should equal 20
+        }
+        
+        p Program.empty |> ignore
 
     [<Test>]
     member this.transactionReset() =
