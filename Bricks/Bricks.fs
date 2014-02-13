@@ -40,7 +40,7 @@ let private removeReferrer (map : ReferrerMap) brick referrer =
 
 let defaultInvalidator env _ = env
 
-type BrickInvalidator = Environment -> Brick -> Environment
+type private BrickInvalidator = Environment -> Brick -> Environment
 
 and EvaluationResult = 
     { value: obj; trace: Brick list; invalidator: BrickInvalidator }
@@ -57,36 +57,48 @@ and Environment =
             let values = this.values.Add(brick, result)
             { this with values = values; referrer = referrer}
         
-         member this.invalidate (bricks : Brick list) =
+        member this.invalidate (bricks : Brick list) =
             let rec invalidateRec this (bricks : Brick list) = 
                 match bricks with
                 | [] -> this
                 | brick::rest ->
-                let hasBrick, {value=value; trace=trace;invalidator=invalidator} = this.values.TryGetValue brick
+                let hasBrick, r = this.values.TryGetValue brick
                 if not hasBrick then invalidateRec this rest else
+                let {value=value; trace=trace;invalidator=invalidator} = r;
                 
                 let hasReferrer, bricksReferrer = this.referrer.TryGetValue brick
                 let bricksReferrer = if hasReferrer then bricksReferrer |> Seq.toList else []
+
+                (* remove the value first to avoid endless recursions, for example if the invalidator causes the very same value to be invalidated *)
+                let this = {this with values = this.values.Remove brick }
                 
-                (* before doing anything, call the invalidator *)
+                (* call the invalidator *)
                 let this = invalidator this brick
 
                 (* remove all referrer *)
                 let referrer = trace |> List.fold (fun referrer dep -> removeReferrer referrer brick dep) this.referrer
                 let referrer = brick |> referrer.Remove
 
-                (* remove the value *)
-                let values = this.values.Remove brick
                 
-                let this = { this with values = values; referrer = referrer }
+                let this = { this with referrer = referrer }
                 invalidateRec this (rest @ bricksReferrer)
 
             bricks |> invalidateRec this
            
+        member this.commitWrites writes = 
+            let commitValue (this:Environment) (brick, value_)  =
+                let this = this.invalidate [brick]
+                match value_ with
+                | None -> this
+                | Some value -> this.add brick {value = value; trace = []; invalidator = defaultInvalidator }
+
+            writes |> List.fold commitValue this
+ 
+
         static member empty = 
             { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty }
 
-type ComputationResult<'v> = { env: Environment; trace: Brick list; value: 'v }
+type ComputationResult<'v> = { env: Environment; trace: Brick list; value: 'v; invalidator: BrickInvalidator }
 
 type Computation<'v> = Environment -> ComputationResult<'v>
 
@@ -100,7 +112,7 @@ type Brick<'v>(f : Computation<'v>) =
             else
             let res = f env
             let v = res.value
-            let newEnv = res.env.add this {value = v:>obj; trace = res.trace; invalidator = defaultInvalidator }
+            let newEnv = res.env.add this {value = v:>obj; trace = res.trace; invalidator = res.invalidator }
             newEnv, v
               
 
@@ -115,18 +127,18 @@ type BrickBuilder() =
             let env, depValue = dependency.evaluate env;
             let contBrick = cont depValue
             let env, value = contBrick.evaluate env
-            { env = env; trace = [dependency]; value = value }
+            { env = env; trace = [dependency]; value = value; invalidator = defaultInvalidator }
         |> makeBrick
 
     (* need to wrap this in a new brick here, to allow a shadow write later on *)
     member this.ReturnFrom (brick: 'value brick) = 
         fun env ->
             let env, value = brick.evaluate env;
-            { env = env; trace = [brick]; value = value }
+            { env = env; trace = [brick]; value = value; invalidator = defaultInvalidator }
         |> makeBrick
 
     member this.Return value = 
-        fun env -> { env = env; trace = []; value = value }
+        fun env -> { env = env; trace = []; value = value; invalidator = defaultInvalidator }
         |> makeBrick
 
 let brick = new BrickBuilder()
@@ -144,15 +156,6 @@ type Program =
             let env,v = brick.evaluate this.env
             { this with env = env }, v
 
-        member this.commitWrites writes = 
-            let commitValue (this:Program) (brick, value_)  =
-                let env = this.env.invalidate [brick]
-                match value_ with
-                | None -> {this with env = env}
-                | Some value -> {this with env = env.add brick {value = value; trace = []; invalidator = defaultInvalidator } }
-
-            writes |> List.fold commitValue this
- 
         static member empty = { env = Environment.empty }
 
 
@@ -177,11 +180,10 @@ type TransactionBuilder() =
     member this.Zero () = id
     member this.Yield _ = id
 
-    member this.Run (t : TransactionM): (Program -> Program) = 
-        fun p -> 
-            let (env, wl) = t (p.env, [])
-            let p = { p with env = env }
-            wl |> List.rev |> p.commitWrites
+    member this.Run (t : TransactionM): (Environment -> Environment) = 
+        fun env -> 
+            let (env, wl) = t (env, [])
+            wl |> List.rev |> env.commitWrites
 
 //    member this.Return p = p
 
@@ -224,15 +226,31 @@ type ProgramBuilder() =
             cont() p
 
     [<CustomOperation("apply", MaintainsVariableSpace = true)>]
-    member this.Apply(nested : ProgramM, transaction: (Program -> Program)) = 
+    member this.Apply(nested : ProgramM, transaction: (Environment -> Environment)) = 
         fun p ->
             let p = nested p
-            transaction p
+            {p with env = transaction p.env}
 
 let program = new ProgramBuilder()
 
-(* Diffs *)
+(* Memo 
 
+    A memo brick is a brick that is wrapped around another brick and remembers the previous value of it.
 
+    The value of a memo brick is (previousValue, currentValue)
+*)
 
+let memo (target:'v brick) (def:'v) : ('v * 'v) brick =
 
+    let memoBrick = brick { return def }
+    fun env ->
+            
+        let env, pv = memoBrick.evaluate env
+        let env, v = target.evaluate env
+        let invalidator env brick = 
+            let env = defaultInvalidator env brick
+            let t = transaction { write memoBrick v }
+            t env
+
+        { env = env; trace = [memoBrick; target]; value = (pv, v); invalidator = invalidator }
+    |> makeBrick

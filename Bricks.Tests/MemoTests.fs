@@ -5,9 +5,32 @@ open FsUnit
 
 open Bricks
 
-(*
+[<TestFixture>]
+type MemoTests() =
 
-type DiffTests() =
+    let a = brick { return 1 }
+    let b = brick { 
+        let! a = a
+        return a * 2 }
+    let c = memo b 0
+
+    [<Test>]
+    member this.simpleMemo() = 
+
+        let t = transaction {
+            write a 2
+        }
+
+        let p = program {
+            let! v = c
+            v |> should equal (0, 2)
+            apply t
+            let! v = c
+            v |> should equal (2, 4)
+        }
+
+        p Program.empty |> ignore
+(*
     
     let a = brick { return set.empty }
     let b = brick {
