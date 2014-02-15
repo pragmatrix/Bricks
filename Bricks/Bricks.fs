@@ -3,6 +3,7 @@
 open System
 open System.Diagnostics
 open System.Collections.Immutable
+open System.Collections.Generic
 
 (* *)
 
@@ -254,3 +255,25 @@ let memo (target:'v brick) (def:'v) : ('v * 'v) brick =
 
         { env = env; trace = [memoBrick; target]; value = (pv, v); invalidator = invalidator }
     |> makeBrick
+
+
+(* idset
+    An id set is a set that organizes data structures that contain a property named id that returns an object.
+    That object represents the identity of the data structure and is used to compare instances of it.
+*)
+
+type IdSet<'v when 'v:(member id:obj)> = HashMap<obj, 'v> 
+
+type 'v idset when 'v:(member id:obj) = IdSet<'v>
+
+module IdSet = 
+    type Diff<'v> = { added: 'v seq; removed: 'v seq; modified: 'v seq }
+
+    let inline id v = (^v: (member id:obj) v)
+
+    let inline diff (s1:'v idset) (s2:'v idset) = 
+        // tbd: combine finding added / modified
+        let added = s2.Values |> Seq.filter (fun v -> id v |> s1.ContainsKey |> not)
+        let removed = s1.Values |> Seq.filter (fun v -> id v |> s2.ContainsKey |> not)
+        let modified = s2.Values |> Seq.filter (fun v -> let id = id v in s1.ContainsKey id && (not (obj.ReferenceEquals(s1.[id],v))) )
+        { added = added; removed = removed; modified = modified}
