@@ -14,7 +14,7 @@ type ProgramTests() =
             return 3;
         }
         let p = Program.empty
-        let p,_ = p.evaluate b
-        p.env.values.ContainsKey b |> should equal true
-        let p = { p with env = p.env.invalidate [b]}
-        p.env.values.ContainsKey b |> should equal false
+        let _ = p.evaluate b
+        b.Value.IsSome |> should equal true
+        let p = p.invalidate [b]
+        b.Value.IsSome |> should equal false

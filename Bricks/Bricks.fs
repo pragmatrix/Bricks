@@ -20,126 +20,108 @@ type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
 module List =
     let flatten l = List.collect id l
 
-(* Brick, Referrer, Environment *)
+(* Brick *)
 
-type Brick = interface end
+type Brick =
+    abstract member invalidate: unit -> Brick list
+    abstract member write: obj option -> unit
+    abstract member addReferrer: Brick -> unit
+    abstract member removeReferrer: Brick -> unit
 
+let rec private invalidate (bricks: Brick list) = 
+    match bricks with
+    | [] -> ()
+    | brick::rest -> 
+    let referrer = brick.invalidate()
+    invalidate (referrer @ rest)
 
-type private ReferrerMap = HashMap<Brick, Brick set>
+let private commitWrites writes =
+    writes |> List.iter (fun (b:Brick, value) ->
+        let env = invalidate [b]
+        b.write value
+    )
 
-let private addReferrer (map : ReferrerMap) (brick:Brick) referrer =
-    let hasSet, set = map.TryGetValue referrer
-    if hasSet then
-        map.SetItem(referrer, set.Add brick)
-    else
-        map.Add(referrer, HashSet.Create brick)
+type ComputationResult<'v> = { trace: Brick list; value: 'v; }
 
-let private removeReferrer (map : ReferrerMap) brick referrer = 
-    let hasReferrer, set = map.TryGetValue referrer
-    if not hasReferrer then map else
-    map.SetItem(referrer, set.Remove brick)
+type Computation<'v> = unit -> ComputationResult<'v>
 
-let defaultInvalidator env _ = env
+type Brick<'v>(f : Computation<_>) =
 
-type private BrickInvalidator = Environment -> Brick -> Environment
+    let mutable trace: Brick list = []
+    let mutable value: 'v option = None
+    let mutable referrer: Brick set = set.empty
 
-and EvaluationResult = 
-    { value: obj; trace: Brick list; invalidator: BrickInvalidator }
+    member this.Trace: Brick list = trace
+    member this.Value: 'v option = value
+    member this.Referrer: Brick set = referrer
 
-and Environment = 
-    {
-        values: HashMap<Brick, EvaluationResult>;
-        referrer: ReferrerMap    
-    }
-    with 
-        member this.add brick result =
-            let {trace=trace;value=value} = result
-            let referrer = trace |> List.fold (fun refs -> addReferrer refs brick) this.referrer
-            let values = this.values.Add(brick, result)
-            { this with values = values; referrer = referrer}
-        
-        member this.invalidate (bricks : Brick list) =
-            let rec invalidateRec this (bricks : Brick list) = 
-                match bricks with
-                | [] -> this
-                | brick::rest ->
-                let hasBrick, r = this.values.TryGetValue brick
-                if not hasBrick then invalidateRec this rest else
-                let {value=value; trace=trace;invalidator=invalidator} = r;
-                
-                let hasReferrer, bricksReferrer = this.referrer.TryGetValue brick
-                let bricksReferrer = if hasReferrer then bricksReferrer |> Seq.toList else []
+    member private this.addTrace t = 
+        t |> List.iter (fun (b:Brick) -> b.addReferrer this)        
+        trace <- t
 
-                (* remove the value first to avoid endless recursions, for example if the invalidator causes the very same value to be invalidated *)
-                let this = {this with values = this.values.Remove brick }
-                
-                (* call the invalidator *)
-                let this = invalidator this brick
+    member private this.removeTrace() =
+        trace |> List.iter (fun (b:Brick) -> b.removeReferrer this)
+        trace <- []
 
-                (* remove all referrer *)
-                let referrer = trace |> List.fold (fun referrer dep -> removeReferrer referrer brick dep) this.referrer
-                let referrer = brick |> referrer.Remove
+    member this.evaluate() =  
+        match value with
+        | Some value -> value
+        | None ->
+        assert (trace = [] && referrer.Count = 0)
+        let res = f()
+        value <- Some res.value
+        this.addTrace res.trace
+        res.value
 
-                
-                let this = { this with referrer = referrer }
-                invalidateRec this (rest @ bricksReferrer)
+    abstract member invalidating : 'v -> unit
+    default this.invalidating v = ()
 
-            bricks |> invalidateRec this
-           
-        member this.commitWrites writes = 
-            let commitValue (this:Environment) (brick, value_)  =
-                let this = this.invalidate [brick]
-                match value_ with
-                | None -> this
-                | Some value -> this.add brick {value = value; trace = []; invalidator = defaultInvalidator }
+    interface Brick with
+        member this.invalidate() =
+            if (value.IsNone) then List.empty else
+            this.invalidating value.Value
+            value <- None
+            this.removeTrace()
+            let res = referrer |> Seq.toList
+            referrer <- set.empty
+            res
+        member this.write v = 
+            assert (value.IsNone && trace = [] && referrer.Count = 0)
+            match v with
+            | Some v -> value <- Some (v :?> 'v)
+            | None -> value <- None
 
-            writes |> List.fold commitValue this
- 
+        member this.addReferrer brick = 
+            referrer <- referrer.Add brick
 
-        static member empty = 
-            { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty }
-
-type ComputationResult<'v> = { env: Environment; trace: Brick list; value: 'v; invalidator: BrickInvalidator }
-
-type Computation<'v> = Environment -> ComputationResult<'v>
-
-type Brick<'v>(f : Computation<'v>) =
-    interface Brick
-    with 
-        member this.evaluate (env:Environment) : Environment * 'v = 
-            let values = env.values
-            if values.ContainsKey this then
-                env, values.[this].value :?> 'v
-            else
-            let res = f env
-            let v = res.value
-            let newEnv = res.env.add this {value = v:>obj; trace = res.trace; invalidator = res.invalidator }
-            newEnv, v
-              
+        member this.removeReferrer brick = 
+            referrer <- referrer.Remove brick
 
 type 't brick = Brick<'t>
+
+
 
 let private makeBrick f = Brick<_>(f)
 
 type BrickBuilder() =
     (* tbd: instead of chaining the computation expression internal closure bricks, we could combine them *)
     member this.Bind (dependency: 'dep brick, cont: 'dep -> 'next brick) : 'next brick =
-        fun env ->
-            let env, depValue = dependency.evaluate env;
+        fun () ->
+            let depValue = dependency.evaluate();
             let contBrick = cont depValue
-            let env, value = contBrick.evaluate env
-            { env = env; trace = [dependency]; value = value; invalidator = defaultInvalidator }
+            let value = contBrick.evaluate()
+            { trace = [dependency]; value = value }
         |> makeBrick
 
     (* need to wrap this in a new brick here, to allow a shadow write later on *)
     member this.ReturnFrom (brick: 'value brick) = 
-        fun env ->
-            let env, value = brick.evaluate env;
-            { env = env; trace = [brick]; value = value; invalidator = defaultInvalidator }
+        fun () ->
+            let value = brick.evaluate();
+            { trace = [brick]; value = value }
         |> makeBrick
 
     member this.Return value = 
-        fun env -> { env = env; trace = []; value = value; invalidator = defaultInvalidator }
+        fun () -> { trace = []; value = value }
         |> makeBrick
 
 let brick = new BrickBuilder()
@@ -148,16 +130,14 @@ let brick = new BrickBuilder()
 
 type Write = Brick * (obj option)
 
-type Program = 
-    { 
-        env: Environment; 
-    }
-    with
-        member this.evaluate (brick: 'v brick) : Program * 'v = 
-            let env,v = brick.evaluate this.env
-            { this with env = env }, v
+type Program() = 
+    member this.evaluate (brick: 'v brick) : 'v = 
+        brick.evaluate()
 
-        static member empty = { env = Environment.empty }
+    member this.invalidate (bricks: Brick list) =
+        invalidate bricks
+
+    static member empty = Program()
 
 
 (* Transaction
@@ -169,22 +149,22 @@ type Program =
     the transaction.
 *)
 
-type Transaction = Environment * Write list
+type Transaction = Write list
 type TransactionM = Transaction -> Transaction
 
 type TransactionBuilder() =
     member this.Bind (brick: 'value brick, cont: 'value -> TransactionM) : TransactionM = 
-        fun (env, wl) ->
-            let env, value = brick.evaluate env
-            cont value (env, wl)
+        fun wl ->
+            let value = brick.evaluate()
+            cont value wl
 
     member this.Zero () = id
     member this.Yield _ = id
 
-    member this.Run (t : TransactionM): (Environment -> Environment) = 
-        fun env -> 
-            let (env, wl) = t (env, [])
-            wl |> List.rev |> env.commitWrites
+    member this.Run (t : TransactionM): (unit -> unit) = 
+        fun () -> 
+            let wl = t []
+            wl |> List.rev |> commitWrites
 
 //    member this.Return p = p
 
@@ -196,14 +176,14 @@ type TransactionBuilder() =
     [<CustomOperation("write", MaintainsVariableSpace = true)>]
     member this.Write(nested : TransactionM, brick: 'v brick, value: 'v) =
         fun t ->
-            let (env, wl) = nested t
-            (env, (brick :> Brick, Some (value :> obj)) :: wl)
+            let wl = nested t
+            (brick :> Brick, Some (value :> obj)) :: wl
             
     [<CustomOperation("reset", MaintainsVariableSpace = true)>]
     member this.Reset(nested: TransactionM, brick : Brick) =
         fun t ->
-            let (env, wl) = nested t
-            (env, (brick, None) :: wl)
+            let wl = nested t
+            (brick, None) :: wl
 
 let transaction = new TransactionBuilder()
 
@@ -215,7 +195,7 @@ type ProgramBuilder() =
 
     member this.Bind (brick: 'value brick, cont: 'value -> ProgramM) : ProgramM = 
         fun p ->
-            let p, v = p.evaluate brick
+            let v = p.evaluate brick
             cont v p
 
     member this.Zero () = id
@@ -227,10 +207,11 @@ type ProgramBuilder() =
             cont() p
 
     [<CustomOperation("apply", MaintainsVariableSpace = true)>]
-    member this.Apply(nested : ProgramM, transaction: (Environment -> Environment)) = 
+    member this.Apply(nested : ProgramM, transaction: (unit -> unit)) = 
         fun p ->
             let p = nested p
-            {p with env = transaction p.env}
+            transaction()
+            p
 
 let program = new ProgramBuilder()
 
@@ -241,21 +222,14 @@ let program = new ProgramBuilder()
     The value of a memo brick is (previousValue, currentValue)
 *)
 
-let memo (target:'v brick) (def:'v) : ('v * 'v) brick =
-
-    let memoBrick = brick { return def }
-    fun env ->
-            
-        let env, pv = memoBrick.evaluate env
-        let env, v = target.evaluate env
-        let invalidator env brick = 
-            let env = defaultInvalidator env brick
-            let t = transaction { write memoBrick v }
-            t env
-
-        { env = env; trace = [memoBrick; target]; value = (pv, v); invalidator = invalidator }
-    |> makeBrick
-
+let memo (target:'v brick) (def:'v) : ('v * 'v) brick = 
+    let previous = ref def
+    Brick<('v*'v)>(fun () ->
+        let v = target.evaluate()
+        let res = { trace = [target]; value = (!previous, v)}
+        previous := v
+        res
+    )
 
 (* idset
     An id set is a set that organizes data structures that contain a property named id that returns an object.
