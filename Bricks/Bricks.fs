@@ -193,13 +193,13 @@ type TransactionBuilder() =
             let t = seq t
             cont() t
 
-    [<CustomOperation("write", MaintainsVariableSpace = true)>]
+    [<CustomOperation("write")>]
     member this.Write(nested : TransactionM, brick: 'v brick, value: 'v) =
         fun t ->
             let (env, wl) = nested t
             (env, (brick :> Brick, Some (value :> obj)) :: wl)
             
-    [<CustomOperation("reset", MaintainsVariableSpace = true)>]
+    [<CustomOperation("reset")>]
     member this.Reset(nested: TransactionM, brick : Brick) =
         fun t ->
             let (env, wl) = nested t
@@ -226,7 +226,7 @@ type ProgramBuilder() =
             let p = seq p
             cont() p
 
-    [<CustomOperation("apply", MaintainsVariableSpace = true)>]
+    [<CustomOperation("apply")>]
     member this.Apply(nested : ProgramM, transaction: (Environment -> Environment)) = 
         fun p ->
             let p = nested p
