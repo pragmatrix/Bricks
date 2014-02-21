@@ -23,21 +23,21 @@ module List =
 (* Brick *)
 
 type Brick =
-    abstract member invalidate: unit -> Brick list
+    abstract member invalidate: unit -> (Brick list * Brick list)
     abstract member write: obj option -> unit
     abstract member addReferrer: Brick -> unit
-    abstract member removeReferrer: Brick -> unit
+    abstract member removeReferrer: Brick -> bool
 
-let rec private invalidate (bricks: Brick list) = 
+let rec private invalidate (bricks: Brick list) (orphaned: Brick list) = 
     match bricks with
-    | [] -> ()
+    | [] -> orphaned
     | brick::rest -> 
-    let referrer = brick.invalidate()
-    invalidate (referrer @ rest)
+    let referrer, newOrphans = brick.invalidate()
+    invalidate (referrer @ rest) (newOrphans @ orphaned)
 
 let private commitWrites writes =
     writes |> List.iter (fun (b:Brick, value) ->
-        let env = invalidate [b]
+        let orphaned = invalidate [b] []
         b.write value
     )
 
@@ -60,8 +60,13 @@ type Brick<'v>(f : Computation<_>) =
         trace <- t
 
     member private this.removeTrace() =
-        trace |> List.iter (fun (b:Brick) -> b.removeReferrer this)
+        let remover (b : Brick) : Brick list = 
+            let orphaned = b.removeReferrer this
+            if orphaned then [b] else []
+
+        let orphans = trace |> List.map remover |> List.flatten
         trace <- []
+        orphans
 
     member this.evaluate() =  
         match value with
@@ -69,22 +74,28 @@ type Brick<'v>(f : Computation<_>) =
         | None ->
         assert (trace = [] && referrer.Count = 0)
         let res = f()
-        value <- Some res.value
         this.addTrace res.trace
+        value <- Some res.value
         res.value
+
+    member private this.IsOrphan = 
+        value.IsSome && referrer.Count = 0
+
 
     abstract member invalidating : 'v -> unit
     default this.invalidating v = ()
 
     interface Brick with
+        
         member this.invalidate() =
-            if (value.IsNone) then List.empty else
+            if (value.IsNone) then ([], []) else
             this.invalidating value.Value
             value <- None
-            this.removeTrace()
+            let orphaned = this.removeTrace()
             let res = referrer |> Seq.toList
             referrer <- set.empty
-            res
+            res, orphaned
+
         member this.write v = 
             assert (value.IsNone && trace = [] && referrer.Count = 0)
             match v with
@@ -95,8 +106,10 @@ type Brick<'v>(f : Computation<_>) =
             referrer <- referrer.Add brick
 
         member this.removeReferrer brick = 
+            let wasOrphaned = this.IsOrphan
             referrer <- referrer.Remove brick
-
+            this.IsOrphan && not wasOrphaned
+ 
 type 't brick = Brick<'t>
 
 
@@ -131,11 +144,15 @@ let brick = new BrickBuilder()
 type Write = Brick * (obj option)
 
 type Program() = 
+//    { potentialOrphans: Brick list }
+
     member this.evaluate (brick: 'v brick) : 'v = 
         brick.evaluate()
 
     member this.invalidate (bricks: Brick list) =
-        invalidate bricks
+        invalidate bricks []
+
+    member this.collect() = this
 
     static member empty = Program()
 
@@ -173,13 +190,13 @@ type TransactionBuilder() =
             let t = seq t
             cont() t
 
-    [<CustomOperation("write", MaintainsVariableSpace = true)>]
+    [<CustomOperation("write")>]
     member this.Write(nested : TransactionM, brick: 'v brick, value: 'v) =
         fun t ->
             let wl = nested t
             (brick :> Brick, Some (value :> obj)) :: wl
             
-    [<CustomOperation("reset", MaintainsVariableSpace = true)>]
+    [<CustomOperation("reset")>]
     member this.Reset(nested: TransactionM, brick : Brick) =
         fun t ->
             let wl = nested t
@@ -206,12 +223,18 @@ type ProgramBuilder() =
             let p = seq p
             cont() p
 
-    [<CustomOperation("apply", MaintainsVariableSpace = true)>]
+    [<CustomOperation("apply")>]
     member this.Apply(nested : ProgramM, transaction: (unit -> unit)) = 
         fun p ->
             let p = nested p
             transaction()
             p
+
+    [<CustomOperation("collect")>]
+    member this.Collect(nested: ProgramM) =
+        fun p ->
+            let p = nested p
+            p.collect()
 
 let program = new ProgramBuilder()
 

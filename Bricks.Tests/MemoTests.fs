@@ -8,14 +8,15 @@ open Bricks
 [<TestFixture>]
 type MemoTests() =
 
-    let a = brick { return 1 }
-    let b = brick { 
-        let! a = a
-        return a * 2 }
-    let c = memo b 0
 
     [<Test>]
     member this.simpleMemo() = 
+
+        let a = brick { return 1 }
+        let b = brick { 
+            let! a = a
+            return a * 2 }
+        let c = memo b 0
 
         let t = transaction {
             write a 2
