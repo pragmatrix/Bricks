@@ -43,12 +43,12 @@ let defaultInvalidator env _ = env
 
 type private BrickInvalidator = Environment -> Brick -> Environment
 
-and EvaluationResult = 
-    { value: obj; trace: Brick list; invalidator: BrickInvalidator }
+and EvaluationResult<'v> = 
+    { value: 'v; trace: Brick list; invalidator: BrickInvalidator }
 
 and Environment = 
     {
-        values: HashMap<Brick, EvaluationResult>;
+        values: HashMap<Brick, EvaluationResult<obj> >;
         referrer: ReferrerMap    
     }
     with 
@@ -91,7 +91,7 @@ and Environment =
                 let this = this.invalidate [brick]
                 match value_ with
                 | None -> this
-                | Some value -> this.add brick {value = value; trace = []; invalidator = defaultInvalidator }
+                | Some value -> this.add brick { EvaluationResult.value = value; trace = []; invalidator = defaultInvalidator }
 
             writes |> List.fold commitValue this
  
@@ -99,7 +99,7 @@ and Environment =
         static member empty = 
             { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty }
 
-type ComputationResult<'v> = { env: Environment; trace: Brick list; value: 'v; invalidator: BrickInvalidator }
+type ComputationResult<'v> = Environment * EvaluationResult<'v>
 
 type Computation<'v> = Environment -> ComputationResult<'v>
 
@@ -111,10 +111,10 @@ type Brick<'v>(f : Computation<'v>) =
             if values.ContainsKey this then
                 env, values.[this].value :?> 'v
             else
-            let res = f env
+            let env, res = f env
             let v = res.value
-            let newEnv = res.env.add this {value = v:>obj; trace = res.trace; invalidator = res.invalidator }
-            newEnv, v
+            let env = env.add this {value = v:>obj; trace = res.trace; invalidator = res.invalidator }
+            env, v
               
 
 type 't brick = Brick<'t>
@@ -128,18 +128,18 @@ type BrickBuilder() =
             let env, depValue = dependency.evaluate env;
             let contBrick = cont depValue
             let env, value = contBrick.evaluate env
-            { env = env; trace = [dependency]; value = value; invalidator = defaultInvalidator }
+            env , { trace = [dependency]; value = value; invalidator = defaultInvalidator }
         |> makeBrick
 
     (* need to wrap this in a new brick here, to allow a shadow write later on *)
     member this.ReturnFrom (brick: 'value brick) = 
         fun env ->
             let env, value = brick.evaluate env;
-            { env = env; trace = [brick]; value = value; invalidator = defaultInvalidator }
+            env, { trace = [brick]; value = value; invalidator = defaultInvalidator }
         |> makeBrick
 
     member this.Return value = 
-        fun env -> { env = env; trace = []; value = value; invalidator = defaultInvalidator }
+        fun env -> env, { trace = []; value = value; invalidator = defaultInvalidator }
         |> makeBrick
 
 let brick = new BrickBuilder()
@@ -253,7 +253,7 @@ let memo (target:'v brick) (def:'v) : ('v * 'v) brick =
             let t = transaction { write memoBrick v }
             t env
 
-        { env = env; trace = [memoBrick; target]; value = (pv, v); invalidator = invalidator }
+        env, { trace = [memoBrick; target]; value = (pv, v); invalidator = invalidator }
     |> makeBrick
 
 
