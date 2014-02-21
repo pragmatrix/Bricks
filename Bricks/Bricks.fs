@@ -91,7 +91,7 @@ and Environment =
                 let this = this.invalidate [brick]
                 match value_ with
                 | None -> this
-                | Some value -> this.add brick { EvaluationResult.value = value; trace = []; invalidator = defaultInvalidator }
+                | Some value -> this.add brick { value = value; trace = []; invalidator = defaultInvalidator }
 
             writes |> List.fold commitValue this
  
@@ -109,11 +109,11 @@ type Brick<'v>(f : Computation<'v>) =
         member this.evaluate (env:Environment) : Environment * 'v = 
             let values = env.values
             if values.ContainsKey this then
-                env, values.[this].value :?> 'v
+                env, unbox values.[this].value
             else
             let env, res = f env
             let v = res.value
-            let env = env.add this {value = v:>obj; trace = res.trace; invalidator = res.invalidator }
+            let env = env.add this {value = box v; trace = res.trace; invalidator = res.invalidator }
             env, v
               
 
@@ -156,6 +156,9 @@ type Program =
         member this.evaluate (brick: 'v brick) : Program * 'v = 
             let env,v = brick.evaluate this.env
             { this with env = env }, v
+
+        member this.collect() : Program =
+            this
 
         static member empty = { env = Environment.empty }
 
@@ -209,6 +212,11 @@ let transaction = new TransactionBuilder()
 
 type ProgramM = Program -> Program
 
+type ValueOf<'v>(brick:Brick<'v>) = 
+    member this.Brick = brick
+
+let valueOf brick = ValueOf(brick)
+
 type ProgramBuilder() =
 
     (* A regular let! is the isolated evaluation of a root brick in the context of the program *)
@@ -216,6 +224,13 @@ type ProgramBuilder() =
     member this.Bind (brick: 'value brick, cont: 'value -> ProgramM) : ProgramM = 
         fun p ->
             let p, v = p.evaluate brick
+            cont v p
+
+    member this.Bind (vo: ValueOf<'value>, cont: 'value option -> ProgramM) : ProgramM =
+        fun p ->
+            let env = p.env
+            let hasValue, evaluationResult = env.values.TryGetValue vo.Brick
+            let v = if hasValue then Some (unbox evaluationResult.value) else None
             cont v p
 
     member this.Zero () = id
@@ -231,6 +246,12 @@ type ProgramBuilder() =
         fun p ->
             let p = nested p
             {p with env = transaction p.env}
+
+    [<CustomOperation("collect")>]
+    member this.Collect(nested : ProgramM) =
+        fun p ->
+            let p = nested p
+            p.collect()
 
 let program = new ProgramBuilder()
 
