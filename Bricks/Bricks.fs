@@ -4,6 +4,7 @@ open System
 open System.Diagnostics
 open System.Collections.Immutable
 open System.Collections.Generic
+open System.Linq
 
 (* *)
 
@@ -37,7 +38,9 @@ let private addReferrer (map : ReferrerMap) (brick:Brick) referrer =
 let private removeReferrer (map : ReferrerMap) brick referrer = 
     let hasReferrer, set = map.TryGetValue referrer
     if not hasReferrer then map else
-    map.SetItem(referrer, set.Remove brick)
+    let set = set.Remove brick
+    if set.Count = 0 then map.Remove referrer else
+    map.SetItem(referrer, set)
 
 let defaultInvalidator env _ = env
 
@@ -49,7 +52,8 @@ and EvaluationResult<'v> =
 and Environment = 
     {
         values: HashMap<Brick, EvaluationResult<obj> >;
-        referrer: ReferrerMap    
+        referrer: ReferrerMap;
+        orphans: Brick set;
     }
     with 
         member this.add brick result =
@@ -63,8 +67,8 @@ and Environment =
                 match bricks with
                 | [] -> this
                 | brick::rest ->
-                let hasBrick, r = this.values.TryGetValue brick
-                if not hasBrick then invalidateRec this rest else
+                let hasRes, r = this.values.TryGetValue brick
+                if not hasRes then invalidateRec this rest else
                 let {value=value; trace=trace;invalidator=invalidator} = r;
                 
                 let hasReferrer, bricksReferrer = this.referrer.TryGetValue brick
@@ -77,15 +81,17 @@ and Environment =
                 let this = invalidator this brick
 
                 (* remove all referrer *)
-                let referrer = trace |> List.fold (fun referrer dep -> removeReferrer referrer brick dep) this.referrer
+                let referrer = trace |> List.fold (fun referrer r -> removeReferrer referrer brick r) this.referrer
                 let referrer = brick |> referrer.Remove
 
-                
-                let this = { this with referrer = referrer }
+                let orphans = trace |> List.filter (fun b -> this.hasValue b && not (referrer.ContainsKey b))
+               
+                let this = { this with referrer = referrer; orphans = this.orphans.Union orphans }
                 invalidateRec this (rest @ bricksReferrer)
 
             bricks |> invalidateRec this
            
+
         member this.commitWrites writes = 
             let commitValue (this:Environment) (brick, value_)  =
                 let this = this.invalidate [brick]
@@ -96,12 +102,22 @@ and Environment =
             writes |> List.fold commitValue this
  
 
+        member this.collect() =
+            let rec collectRec this = 
+                if this.orphans.Count = 0 then this else
+                let batch = this.orphans |> Seq.toList
+                let this = { this with orphans = set.empty }
+                let this = this.invalidate batch
+                collectRec this
+
+            collectRec this
+
+        member this.hasValue b = this.values.ContainsKey b
+
         static member empty = 
-            { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty }
+            { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty; orphans = set.Empty }
 
-type ComputationResult<'v> = Environment * EvaluationResult<'v>
-
-type Computation<'v> = Environment -> ComputationResult<'v>
+type Computation<'v> = Environment -> (Environment * EvaluationResult<'v>)
 
 type Brick<'v>(f : Computation<'v>) =
     interface Brick
@@ -158,7 +174,7 @@ type Program =
             { this with env = env }, v
 
         member this.collect() : Program =
-            this
+            { this with env = this.env.collect() }
 
         static member empty = { env = Environment.empty }
 

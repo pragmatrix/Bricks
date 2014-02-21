@@ -40,4 +40,3 @@ type GCTests() =
         }
 
         p Program.empty |> ignore
-
