@@ -8,17 +8,16 @@ open Bricks
 [<TestFixture>]
 type TransactionTests() =
 
-    let a = brick { return 3 }
-    let b = brick { return 5 }
-    let c = brick {
-        let! a = a
-        let! b = b
-        return a * b
-    }
 
     [<Test>]
     member this.transactionSet() =
         
+        let a = brick { return 3 }
+        let c = brick {
+            let! a = a
+            return a * 5
+        }
+
         let t = transaction {
             write a 4
         }
@@ -35,6 +34,12 @@ type TransactionTests() =
 
     [<Test>]
     member this.lastWriteWins() =
+        let a = brick { return 3 }
+        let c = brick {
+            let! a = a
+            return a * 5
+        }
+
         let t = transaction {
             write a 3
             write a 4
@@ -54,6 +59,12 @@ type TransactionTests() =
 
     [<Test>]
     member this.transactionReset() =
+        let a = brick { return 3 }
+        let c = brick {
+            let! a = a
+            return a * 5
+        }
+
         let t = transaction {
             write a 4
         }
