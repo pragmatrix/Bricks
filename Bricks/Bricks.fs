@@ -105,7 +105,7 @@ and Environment =
         member this.collect() =
             let rec collectRec this = 
                 if this.orphans.Count = 0 then this else
-                let batch = this.orphans |> Seq.toList
+                let batch = this.orphans |> Seq.filter (this.hasReferrer >> not) |> Seq.toList
                 let this = { this with orphans = set.empty }
                 let this = this.invalidate batch
                 collectRec this
@@ -113,6 +113,7 @@ and Environment =
             collectRec this
 
         member this.hasValue b = this.values.ContainsKey b
+        member this.hasReferrer b = this.referrer.ContainsKey b
 
         static member empty = 
             { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty; orphans = set.Empty }
