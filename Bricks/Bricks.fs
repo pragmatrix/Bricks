@@ -37,15 +37,14 @@ type Brick = interface end
 type private ReferrerMap = HashMap<Brick, Brick set>
 
 let private addReferrer (map : ReferrerMap) (brick:Brick) referrer =
-    let hasSet, set = map.TryGetValue referrer
-    if hasSet then
-        map.SetItem(referrer, set.Add brick)
-    else
-        map.Add(referrer, HashSet.Create brick)
+    match map.get referrer with
+    | Some set -> map.SetItem(referrer, set.Add brick)
+    | None -> map.Add(referrer, HashSet.Create brick)
 
 let private removeReferrer (map : ReferrerMap) brick referrer = 
-    let hasReferrer, set = map.TryGetValue referrer
-    if not hasReferrer then map else
+    match map.get referrer with
+    | None -> map
+    | Some set ->
     let set = set.Remove brick
     if set.Count = 0 then map.Remove referrer else
     map.SetItem(referrer, set)
