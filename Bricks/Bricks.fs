@@ -88,9 +88,6 @@ and Environment =
 
                 (* remove the value first to avoid endless recursions, for example if the invalidator causes the very same value to be invalidated *)
                 let this = {this with values = this.values.Remove brick }
-                
-                (* call the invalidator *)
-                let this = invalidator this brick
 
                 (* remove all referrer *)
                 let referrer = this.referrer
@@ -100,6 +97,10 @@ and Environment =
                 let orphans = trace |> List.filter (fun b -> this.hasValue b && not (referrer.has b))
                
                 let this = { this with referrer = referrer; orphans = this.orphans.Union orphans }
+
+                (* call the invalidator *)
+                let this = invalidator this brick
+
                 invalidateRec this (rest @ bricksReferrer)
 
             bricks |> invalidateRec this
