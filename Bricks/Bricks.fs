@@ -11,12 +11,20 @@ open System.Linq
 type HashSet = ImmutableHashSet
 type HashSet<'k> = ImmutableHashSet<'k>
 type 'k set = HashSet<'k>
+
 module set = 
     let empty<'e> = HashSet<'e>.Empty
     let ofSeq = HashSet.CreateRange
 
 type HashMap = ImmutableDictionary
 type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
+
+type ImmutableDictionary<'k, 'v> with
+    member this.get k = 
+        let has, v = this.TryGetValue k
+        if has then Some v else None
+    member this.has k = 
+        this.ContainsKey k
 
 module List =
     let flatten l = List.collect id l
@@ -64,15 +72,19 @@ and Environment =
         
         member this.invalidate (bricks : Brick list) =
             let rec invalidateRec this (bricks : Brick list) = 
+
                 match bricks with
                 | [] -> this
                 | brick::rest ->
-                let hasRes, r = this.values.TryGetValue brick
-                if not hasRes then invalidateRec this rest else
-                let {value=value; trace=trace;invalidator=invalidator} = r;
+
+                match this.values.get brick with
+                | None -> invalidateRec this rest
+                | Some {value=value; trace=trace; invalidator=invalidator} ->
                 
-                let hasReferrer, bricksReferrer = this.referrer.TryGetValue brick
-                let bricksReferrer = if hasReferrer then bricksReferrer |> Seq.toList else []
+                let bricksReferrer = 
+                    match this.referrer.get brick with
+                    | Some r -> r |> Seq.toList
+                    | None -> []
 
                 (* remove the value first to avoid endless recursions, for example if the invalidator causes the very same value to be invalidated *)
                 let this = {this with values = this.values.Remove brick }
@@ -81,10 +93,11 @@ and Environment =
                 let this = invalidator this brick
 
                 (* remove all referrer *)
+                let referrer = this.referrer
                 let referrer = trace |> List.fold (fun referrer r -> removeReferrer referrer brick r) this.referrer
                 let referrer = brick |> referrer.Remove
 
-                let orphans = trace |> List.filter (fun b -> this.hasValue b && not (referrer.ContainsKey b))
+                let orphans = trace |> List.filter (fun b -> this.hasValue b && not (referrer.has b))
                
                 let this = { this with referrer = referrer; orphans = this.orphans.Union orphans }
                 invalidateRec this (rest @ bricksReferrer)
@@ -112,11 +125,11 @@ and Environment =
 
             collectRec this
 
-        member this.hasValue b = this.values.ContainsKey b
-        member this.hasReferrer b = this.referrer.ContainsKey b
+        member this.hasValue b = this.values.has b
+        member this.hasReferrer b = this.referrer.has b
 
         static member empty = 
-            { values = ImmutableDictionary.Empty; referrer = ImmutableDictionary.Empty; orphans = set.Empty }
+            { values = HashMap.Empty; referrer = HashMap.Empty; orphans = set.Empty }
 
 type Computation<'v> = Environment -> (Environment * EvaluationResult<'v>)
 
