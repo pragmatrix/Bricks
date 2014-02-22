@@ -19,6 +19,9 @@ module set =
 type HashMap = ImmutableDictionary
 type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
 
+type ImmutableHashSet<'v> with
+    member this.has v = this.Contains v
+
 type ImmutableDictionary<'k, 'v> with
     member this.get k = 
         let has, v = this.TryGetValue k
@@ -34,21 +37,6 @@ module List =
 type Brick = interface end
 
 
-type private ReferrerMap = HashMap<Brick, Brick set>
-
-let private addReferrer (map : ReferrerMap) (brick:Brick) referrer =
-    match map.get referrer with
-    | Some set -> map.SetItem(referrer, set.Add brick)
-    | None -> map.Add(referrer, HashSet.Create brick)
-
-let private removeReferrer (map : ReferrerMap) brick referrer = 
-    match map.get referrer with
-    | None -> map
-    | Some set ->
-    let set = set.Remove brick
-    if set.Count = 0 then map.Remove referrer else
-    map.SetItem(referrer, set)
-
 let defaultInvalidator env _ = env
 
 type private BrickInvalidator = Environment -> Brick -> Environment
@@ -56,21 +44,25 @@ type private BrickInvalidator = Environment -> Brick -> Environment
 and BrickState = 
     { value: obj; trace: Brick list; invalidator: BrickInvalidator; referrer: Brick set }
     with 
+        member this.addReferrer referrer =
+            { this with referrer = this.referrer.Add referrer }
+        member this.removeReferrer referrer = 
+            { this with referrer = this.referrer.Remove referrer }
+
         static member make value trace invalidator =
             { value= value; trace = trace; invalidator = invalidator; referrer = set.empty }
 
 and Environment = 
     {
         values: HashMap<Brick, BrickState>;
-        referrer: ReferrerMap;
         orphans: Brick set;
     }
     with 
         member this.add brick state =
-            let {trace=trace;value=value} = state
-            let referrer = trace |> List.fold (fun refs -> addReferrer refs brick) this.referrer
+            let trace = state.trace
+            let this = trace |> List.fold (fun (env:Environment) r -> env.addReferrer r brick) this
             let values = this.values.Add(brick, state)
-            { this with values = values; referrer = referrer}
+            { this with values = values }
         
         member this.invalidate (bricks : Brick list) =
             let rec invalidateRec this (bricks : Brick list) = 
@@ -81,31 +73,22 @@ and Environment =
 
                 match this.values.get brick with
                 | None -> invalidateRec this rest
-                | Some {value=value; trace=trace; invalidator=invalidator} ->
+                | Some {value=value; trace=trace; invalidator=invalidator; referrer=referrer} ->
                 
-                let bricksReferrer = 
-                    match this.referrer.get brick with
-                    | Some r -> r |> Seq.toList
-                    | None -> []
-
                 let this = {this with values = this.values.Remove brick }
 
                 (* remove all referrer *)
-                let referrer = this.referrer
-                let referrer = trace |> List.fold (fun referrer r -> removeReferrer referrer brick r) this.referrer
-                let referrer = brick |> referrer.Remove
+                let this = trace |> List.fold (fun (env:Environment) r -> env.removeReferrer r brick ) this
 
-                let orphans = trace |> List.filter (fun b -> this.hasValue b && not (referrer.has b))
-               
-                let this = { this with referrer = referrer; orphans = this.orphans.Union orphans }
+                let orphans = trace |> List.filter (fun dep -> this.hasValue dep && not (this.hasReferrer dep))
+                let this = { this with orphans = this.orphans.Union orphans }
 
                 (* call the invalidator as late as possible so that it sees a consistently connected graph *)
                 let this = invalidator this brick
 
-                invalidateRec this (rest @ bricksReferrer)
+                invalidateRec this (rest @ (Seq.toList referrer))
 
             bricks |> invalidateRec this
-           
 
         member this.commitWrites writes = 
             let commitValue (this:Environment) (brick, value_)  =
@@ -115,7 +98,6 @@ and Environment =
                 | Some value -> this.add brick (BrickState.make value [] defaultInvalidator)
 
             writes |> List.fold commitValue this
- 
 
         member this.collect() =
             let rec collectRec this = 
@@ -128,10 +110,32 @@ and Environment =
             collectRec this
 
         member this.hasValue b = this.values.has b
-        member this.hasReferrer b = this.referrer.has b
+
+        member private this.addReferrer brick referrer =
+            match this.values.get brick with
+            | None -> this
+            | Some state ->
+            let state = state.addReferrer referrer
+            this.setState brick state
+            
+        member private this.removeReferrer brick referrer = 
+            match this.values.get brick with
+            | None -> this
+            | Some state ->
+            let state = state.removeReferrer referrer
+            this.setState brick state
+
+        member private this.hasReferrer brick = 
+            match this.values.get brick with
+            | None -> false
+            | Some state -> state.referrer.Count <> 0
+
+        member private this.setState brick state =
+            { this with values = this.values.SetItem(brick, state) }
+
 
         static member empty = 
-            { values = HashMap.Empty; referrer = HashMap.Empty; orphans = set.Empty }
+            { values = HashMap.Empty; orphans = set.Empty }
 
 type Computation = Environment -> (Environment * BrickState)
 
