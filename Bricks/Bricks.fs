@@ -65,30 +65,27 @@ and Environment =
             { this with values = values }
         
         member this.invalidate (bricks : Brick list) =
-            let rec invalidateRec this (bricks : Brick list) = 
 
-                match bricks with
-                | [] -> this
-                | brick::rest ->
+            match bricks with
+            | [] -> this
+            | brick::rest ->
 
-                match this.values.get brick with
-                | None -> invalidateRec this rest
-                | Some {value=value; trace=trace; invalidator=invalidator; referrer=referrer} ->
+            match this.values.get brick with
+            | None -> this.invalidate rest
+            | Some {value=value; trace=trace; invalidator=invalidator; referrer=referrer} ->
                 
-                let this = {this with values = this.values.Remove brick }
+            let this = {this with values = this.values.Remove brick }
 
-                (* remove all referrer *)
-                let this = trace |> List.fold (fun (env:Environment) r -> env.removeReferrer r brick ) this
+            (* remove all referrer *)
+            let this = trace |> List.fold (fun (env:Environment) r -> env.removeReferrer r brick ) this
 
-                let orphans = trace |> List.filter (fun dep -> this.hasValue dep && not (this.hasReferrer dep))
-                let this = { this with orphans = this.orphans.Union orphans }
+            let orphans = trace |> List.filter (fun dep -> this.hasValue dep && not (this.hasReferrer dep))
+            let this = { this with orphans = this.orphans.Union orphans }
 
-                (* call the invalidator as late as possible so that it sees a consistently connected graph *)
-                let this = invalidator this brick
+            (* call the invalidator as late as possible so that it sees a consistently connected graph *)
+            let this = invalidator this brick
 
-                invalidateRec this (rest @ (Seq.toList referrer))
-
-            bricks |> invalidateRec this
+            this.invalidate (rest @ (Seq.toList referrer))
 
         member this.commitWrites writes = 
             let commitValue (this:Environment) (brick, value_)  =
