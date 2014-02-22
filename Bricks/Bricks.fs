@@ -53,20 +53,23 @@ let defaultInvalidator env _ = env
 
 type private BrickInvalidator = Environment -> Brick -> Environment
 
-and EvaluationResult<'v> = 
-    { value: 'v; trace: Brick list; invalidator: BrickInvalidator }
+and BrickState = 
+    { value: obj; trace: Brick list; invalidator: BrickInvalidator; referrer: Brick set }
+    with 
+        static member make value trace invalidator =
+            { value= value; trace = trace; invalidator = invalidator; referrer = set.empty }
 
 and Environment = 
     {
-        values: HashMap<Brick, EvaluationResult<obj> >;
+        values: HashMap<Brick, BrickState>;
         referrer: ReferrerMap;
         orphans: Brick set;
     }
     with 
-        member this.add brick result =
-            let {trace=trace;value=value} = result
+        member this.add brick state =
+            let {trace=trace;value=value} = state
             let referrer = trace |> List.fold (fun refs -> addReferrer refs brick) this.referrer
-            let values = this.values.Add(brick, result)
+            let values = this.values.Add(brick, state)
             { this with values = values; referrer = referrer}
         
         member this.invalidate (bricks : Brick list) =
@@ -109,7 +112,7 @@ and Environment =
                 let this = this.invalidate [brick]
                 match value_ with
                 | None -> this
-                | Some value -> this.add brick { value = value; trace = []; invalidator = defaultInvalidator }
+                | Some value -> this.add brick (BrickState.make value [] defaultInvalidator)
 
             writes |> List.fold commitValue this
  
@@ -130,9 +133,9 @@ and Environment =
         static member empty = 
             { values = HashMap.Empty; referrer = HashMap.Empty; orphans = set.Empty }
 
-type Computation<'v> = Environment -> (Environment * EvaluationResult<'v>)
+type Computation = Environment -> (Environment * BrickState)
 
-type Brick<'v>(f : Computation<'v>) =
+type Brick<'v>(f : Computation) =
     interface Brick
     with 
         member this.evaluate (env:Environment) : Environment * 'v = 
@@ -140,15 +143,15 @@ type Brick<'v>(f : Computation<'v>) =
             if values.ContainsKey this then
                 env, unbox values.[this].value
             else
-            let env, res = f env
-            let v = res.value
-            let env = env.add this {value = box v; trace = res.trace; invalidator = res.invalidator }
+            let env, state = f env
+            let v = unbox state.value
+            let env = env.add this state
             env, v
               
 
 type 't brick = Brick<'t>
 
-let private makeBrick f = Brick<_>(f)
+let private makeBrick<'v> f = Brick<'v>(f)
 
 type BrickBuilder() =
     (* tbd: instead of chaining the computation expression internal closure bricks, we could combine them *)
@@ -157,18 +160,18 @@ type BrickBuilder() =
             let env, depValue = dependency.evaluate env;
             let contBrick = cont depValue
             let env, value = contBrick.evaluate env
-            env , { trace = [dependency]; value = value; invalidator = defaultInvalidator }
+            env , BrickState.make value [dependency] defaultInvalidator
         |> makeBrick
 
     (* need to wrap this in a new brick here, to allow a shadow write later on *)
     member this.ReturnFrom (brick: 'value brick) = 
         fun env ->
             let env, value = brick.evaluate env;
-            env, { trace = [brick]; value = value; invalidator = defaultInvalidator }
+            env, BrickState.make value [brick] defaultInvalidator
         |> makeBrick
 
     member this.Return value = 
-        fun env -> env, { trace = []; value = value; invalidator = defaultInvalidator }
+        fun env -> env, BrickState.make value [] defaultInvalidator
         |> makeBrick
 
 let brick = new BrickBuilder()
@@ -303,7 +306,7 @@ let memo (target:'v brick) (def:'v) : ('v * 'v) brick =
             let t = transaction { write memoBrick v }
             t env
 
-        env, { trace = [memoBrick; target]; value = (pv, v); invalidator = invalidator }
+        env, BrickState.make (pv, v) [memoBrick; target] invalidator
     |> makeBrick
 
 
