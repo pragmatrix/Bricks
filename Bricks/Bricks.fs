@@ -86,7 +86,6 @@ and Environment =
                     | Some r -> r |> Seq.toList
                     | None -> []
 
-                (* remove the value first to avoid endless recursions, for example if the invalidator causes the very same value to be invalidated *)
                 let this = {this with values = this.values.Remove brick }
 
                 (* remove all referrer *)
@@ -98,7 +97,7 @@ and Environment =
                
                 let this = { this with referrer = referrer; orphans = this.orphans.Union orphans }
 
-                (* call the invalidator *)
+                (* call the invalidator as late as possible so that it sees a consistently connected graph *)
                 let this = invalidator this brick
 
                 invalidateRec this (rest @ bricksReferrer)
