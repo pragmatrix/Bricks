@@ -1,5 +1,7 @@
 ﻿module Bricks
 
+(** BRICKS, F# COMPUTATION EXPRESSIONS AND COMBINATORS FOR LAZY INCREMENTAL COMPUTATION, SEE README.MD **)
+
 open System
 open System.Diagnostics
 open System.Collections.Immutable
@@ -32,7 +34,13 @@ type ImmutableDictionary<'k, 'v> with
 module List =
     let flatten l = List.collect id l
 
-(* Brick, Referrer, Environment *)
+module Seq = 
+    let flatten l = Seq.collect id l
+
+let inline curry f a b = f (a, b)
+let inline uncurry f (a, b) = f a b
+
+(** BRICK, ENVIRONMENT **)
 
 type Brick = interface end
 
@@ -177,7 +185,7 @@ type BrickBuilder() =
 
 let brick = new BrickBuilder()
 
-(* Program *)
+(* PROGRAM *)
 
 type Write = Brick * (obj option)
 
@@ -288,6 +296,40 @@ type ProgramBuilder() =
 
 let program = new ProgramBuilder()
 
+(** BASIC COMBINATORS **)
+
+(*
+    Value brick.
+*)
+
+let value (v : 'v) : 'v brick =
+    brick {
+        return v
+    }
+
+(*
+    A conversion brick applies a function to a brick.
+*)
+
+let convert (c: 's -> 't) (source: 's brick) : 't brick =
+    brick {
+        let! s = source
+        return c s
+    }
+
+(*
+    With combine, two bricks can be combined by a funcion.
+*)
+
+let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
+    brick {
+        let! a = a
+        let! b = b
+        return c a b
+    }
+
+(** BRICKS IN TIME **)
+
 (* Memo 
 
     A memo brick is a brick that is wrapped around another brick and remembers the previous value of it.
@@ -295,7 +337,7 @@ let program = new ProgramBuilder()
     The value of a memo brick is (previousValue, currentValue)
 *)
 
-let memo (target:'v brick) (def:'v) : ('v * 'v) brick =
+let memo (def:'v) (target:'v brick) : ('v * 'v) brick =
 
     let memoBrick = brick { return def }
     fun env ->
@@ -310,24 +352,78 @@ let memo (target:'v brick) (def:'v) : ('v * 'v) brick =
         env, BrickState.make (pv, v) [memoBrick; target] invalidator
     |> makeBrick
 
+(*
+    A diff brick is a memo brick and a diff function that is applied to output values of the memo.
+*)
+
+let diff (def: 'v) (diff: 'v -> 'v -> 'd) (target: 'v brick) =
+    target |> memo def |> convert (uncurry diff)
 
 (* idset
     An id set is a set that organizes data structures that contain a property named id that returns an object.
     That object represents the identity of the data structure and is used to compare instances of it.
 *)
 
-type IdSet<'v when 'v:(member id:obj)> = HashMap<obj, 'v> 
+type Id = obj
 
-type 'v idset when 'v:(member id:obj) = IdSet<'v>
+type IdSet<'v> = HashMap<Id, 'v> 
+
+type 'v idset = IdSet<'v>
+
 
 module IdSet = 
-    type Diff<'v> = { added: 'v seq; removed: 'v seq; modified: 'v seq }
+    
+    type Change<'v> =
+        | Added of 'v
+        | Modified of 'v
+        | Removed of 'v
 
-    let inline id v = (^v: (member id:obj) v)
-
-    let inline diff (s1:'v idset) (s2:'v idset) = 
+    let inline diff (getId: 'v -> Id) (s1:'v idset) (s2:'v idset) = 
         // tbd: combine finding added / modified
-        let added = s2.Values |> Seq.filter (fun v -> id v |> s1.ContainsKey |> not)
-        let removed = s1.Values |> Seq.filter (fun v -> id v |> s2.ContainsKey |> not)
-        let modified = s2.Values |> Seq.filter (fun v -> let id = id v in s1.ContainsKey id && (not (obj.ReferenceEquals(s1.[id],v))) )
-        { added = added; removed = removed; modified = modified}
+        let added = 
+            s2.Values 
+            |> Seq.filter (fun v -> getId v |> s1.ContainsKey |> not) 
+            |> Seq.map Added
+
+        let modified = 
+            s2.Values 
+            |> Seq.filter (fun v -> let id = getId v in s1.ContainsKey id && (not (obj.ReferenceEquals(s1.[id],v))) )
+            |> Seq.map Modified
+
+        let removed = 
+            s1.Values 
+            |> Seq.filter (fun v -> getId v |> s2.ContainsKey |> not)
+            |> Seq.map Removed
+
+        [removed; modified; added] |> Seq.flatten
+
+    (* projector
+        A set projector projects set differences to three functions. Its main use is to
+        project id based incremental set differences to operating system calls.
+    *)
+
+    type Projector<'s, 't>
+        (
+            getId: 's -> Id, 
+            added: 's -> 't, 
+            modified: 's -> 't -> 't, 
+            removed: 's -> 't -> unit
+        ) =
+
+        let mutable map: HashMap<Id, 't> = HashMap.Empty
+
+        member this.project change =
+            match change with
+            | Added s ->
+                let t = added s
+                map <- map.Add(getId s, t)
+            | Modified s -> 
+                let id = getId s
+                let t = map.[id]
+                let t = modified s t
+                map <- map.SetItem(id, t)
+            | Removed s -> 
+                let id = getId s
+                let t = map.[id]
+                removed s t
+                map <- map.Remove id

@@ -12,7 +12,7 @@ type MemoTests() =
     let b = brick { 
         let! a = a
         return a * 2 }
-    let c = memo b 0
+    let c = b |> memo 0
 
     [<Test>]
     member this.simpleMemo() = 
