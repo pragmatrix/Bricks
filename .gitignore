@@ -7,4 +7,4 @@ obj/
 *.ncrunchproject
 *.user
 _NCrunch_*/
-
+/.nuget/NuGet.exe
