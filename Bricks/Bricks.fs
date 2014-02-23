@@ -71,12 +71,15 @@ and Environment =
             let this = trace |> List.fold (fun (env:Environment) r -> env.addReferrer r brick) this
             let values = this.values.Add(brick, state)
             { this with values = values }
-        
-        member this.invalidate (bricks : Brick list) =
+
+        member this.invalidate (brick: Brick) = this.invalidate [brick]
+        member this.invalidate (bricks: Brick list) = this.invalidate [bricks]
+        member private this.invalidate (bricks : Brick list list) =
 
             match bricks with
             | [] -> this
-            | brick::rest ->
+            | []::rest -> this.invalidate rest
+            | (brick::restl)::rest ->
 
             match this.values.get brick with
             | None -> this.invalidate rest
@@ -93,11 +96,11 @@ and Environment =
             (* call the invalidator as late as possible so that it sees a consistently connected graph *)
             let this = invalidator this brick
 
-            this.invalidate (rest @ (Seq.toList referrer))
+            this.invalidate ((Seq.toList referrer) :: restl :: rest)
 
         member this.commitWrites writes = 
-            let commitValue (this:Environment) (brick, value_)  =
-                let this = this.invalidate [brick]
+            let commitValue (this:Environment) (brick : Brick, value_)  =
+                let this = this.invalidate brick
                 match value_ with
                 | None -> this
                 | Some value -> this.add brick (BrickState.make value [] defaultInvalidator)
@@ -109,7 +112,7 @@ and Environment =
                 if this.orphans.Count = 0 then this else
                 let batch = this.orphans |> Seq.filter (this.hasReferrer >> not) |> Seq.toList
                 let this = { this with orphans = set.empty }
-                let this = this.invalidate batch
+                let this = this.invalidate [batch]
                 collectRec this
 
             collectRec this
@@ -337,27 +340,27 @@ let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
     The value of a memo brick is (previousValue, currentValue)
 *)
 
-let memo (def:'v) (target:'v brick) : ('v * 'v) brick =
+let memo (def:'v) (source:'v brick) : ('v * 'v) brick =
 
     let memoBrick = brick { return def }
     fun env ->
             
         let env, pv = memoBrick.evaluate env
-        let env, v = target.evaluate env
+        let env, v = source.evaluate env
         let invalidator env brick = 
             let env = defaultInvalidator env brick
             let t = transaction { write memoBrick v }
             t env
 
-        env, BrickState.make (pv, v) [memoBrick; target] invalidator
+        env, BrickState.make (pv, v) [memoBrick; source] invalidator
     |> makeBrick
 
 (*
     A diff brick is a memo brick and a diff function that is applied to output values of the memo.
 *)
 
-let diff (def: 'v) (diff: 'v -> 'v -> 'd) (target: 'v brick) =
-    target |> memo def |> convert (uncurry diff)
+let diff (def: 'v) (diff: 'v -> 'v -> 'd) (source: 'v brick) =
+    source |> memo def |> convert (uncurry diff)
 
 (* idset
     An id set is a set that organizes data structures that contain a property named id that returns an object.
@@ -373,12 +376,14 @@ type 'v idset = IdSet<'v>
 
 module IdSet = 
     
+    let private bDiff = diff
+
     type Change<'v> =
         | Added of 'v
         | Modified of 'v
         | Removed of 'v
 
-    let inline diff (getId: 'v -> Id) (s1:'v idset) (s2:'v idset) = 
+    let diff (getId: 'v -> Id) (s1:'v idset) (s2:'v idset) = 
         // tbd: combine finding added / modified
         let added = 
             s2.Values 
@@ -396,6 +401,9 @@ module IdSet =
             |> Seq.map Removed
 
         [removed; modified; added] |> Seq.flatten
+
+    let trackChanges (getId: 'v -> Id) (source : 'v idset brick) = 
+        source |> bDiff IdSet.Empty (diff getId)
 
     (* projector
         A set projector projects set differences to three functions. Its main use is to
