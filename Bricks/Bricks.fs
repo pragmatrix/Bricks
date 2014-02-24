@@ -73,13 +73,11 @@ and Environment =
             { this with values = values }
 
         member this.invalidate (brick: Brick) = this.invalidate [brick]
-        member this.invalidate (bricks: Brick list) = this.invalidate [bricks]
-        member private this.invalidate (bricks : Brick list list) =
+        member this.invalidate (bricks : Brick list) =
 
             match bricks with
             | [] -> this
-            | []::rest -> this.invalidate rest
-            | (brick::restl)::rest ->
+            | brick::rest ->
 
             match this.values.get brick with
             | None -> this.invalidate rest
@@ -96,7 +94,7 @@ and Environment =
             (* call the invalidator as late as possible so that it sees a consistently connected graph *)
             let this = invalidator this brick
 
-            this.invalidate ((Seq.toList referrer) :: restl :: rest)
+            this.invalidate ((Seq.toList referrer) @ rest)
 
         member this.commitWrites writes = 
             let commitValue (this:Environment) (brick : Brick, value_)  =
@@ -112,7 +110,7 @@ and Environment =
                 if this.orphans.Count = 0 then this else
                 let batch = this.orphans |> Seq.filter (this.hasReferrer >> not) |> Seq.toList
                 let this = { this with orphans = set.empty }
-                let this = this.invalidate [batch]
+                let this = this.invalidate batch
                 collectRec this
 
             collectRec this
@@ -172,7 +170,7 @@ type BrickBuilder() =
             let env, depValue = dependency.evaluate env;
             let contBrick = cont depValue
             let env, value = contBrick.evaluate env
-            env , BrickState.make value [dependency] defaultInvalidator
+            env , BrickState.make value [dependency; contBrick] defaultInvalidator
         |> makeBrick
 
     (* need to wrap this in a new brick here, to allow a shadow write later on *)

@@ -33,6 +33,31 @@ type TransactionTests() =
         p Program.empty |> ignore
 
     [<Test>]
+    member this.continuationGetsInvalidated() = 
+        let a = brick { return 3 }
+        let b = brick { return 4 }
+        let c = brick {
+            let! a = a
+            let! b = b
+            return a * b
+        }
+
+        let t = transaction {
+            write b 5
+        }
+        
+        let p = program {
+            let! v = c
+            v |> should equal 12
+            apply t
+            let! v = c
+            v |> should equal 15
+        }
+
+        p Program.empty |> ignore
+
+
+    [<Test>]
     member this.lastWriteWins() =
         let a = brick { return 3 }
         let c = brick {
