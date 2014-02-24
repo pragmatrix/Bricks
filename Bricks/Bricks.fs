@@ -31,6 +31,10 @@ type ImmutableDictionary<'k, 'v> with
     member this.has k = 
         this.ContainsKey k
 
+type ImmutableDictionary with
+    static member fromSeq seq = 
+        ImmutableDictionary.CreateRange(Seq.map (fun (k, v) -> KeyValuePair(k, v)) seq)
+
 module List =
     let flatten l = List.collect id l
 
@@ -378,6 +382,8 @@ module IdSet =
     
     let private bDiff = diff
 
+    let fromSeq (identify: 'v -> Id) (seq: 'v seq) = HashMap.fromSeq (Seq.map (fun v -> identify v, v) seq)
+
     type Change<'v> =
         | Added of 'v
         | Modified of 'v
@@ -385,21 +391,21 @@ module IdSet =
 
     type ChangeSet<'v> = Change<'v> seq
 
-    let diff (getId: 'v -> Id) (s1:'v idset) (s2:'v idset) = 
+    let diff (identify: 'v -> Id) (s1:'v idset) (s2:'v idset) = 
         // tbd: combine finding added / modified
         let added = 
             s2.Values 
-            |> Seq.filter (fun v -> getId v |> s1.ContainsKey |> not) 
+            |> Seq.filter (fun v -> identify v |> s1.ContainsKey |> not) 
             |> Seq.map Added
 
         let modified = 
             s2.Values 
-            |> Seq.filter (fun v -> let id = getId v in s1.ContainsKey id && (not (obj.ReferenceEquals(s1.[id],v))) )
+            |> Seq.filter (fun v -> let id = identify v in s1.ContainsKey id && (not (obj.ReferenceEquals(s1.[id],v))) )
             |> Seq.map Modified
 
         let removed = 
             s1.Values 
-            |> Seq.filter (fun v -> getId v |> s2.ContainsKey |> not)
+            |> Seq.filter (fun v -> identify v |> s2.ContainsKey |> not)
             |> Seq.map Removed
 
         [removed; modified; added] |> Seq.flatten
@@ -417,7 +423,7 @@ module IdSet =
 
     type Projector<'s, 't>
         (
-            getId: 's -> Id, 
+            identify: 's -> Id, 
             added: 's -> 't, 
             modified: 's -> 't -> 't, 
             removed: 's -> 't -> unit
@@ -437,14 +443,14 @@ module IdSet =
             match change with
             | Added s ->
                 let t = added s
-                map <- map.Add(getId s, t)
+                map <- map.Add(identify s, t)
             | Modified s -> 
-                let id = getId s
+                let id = identify s
                 let t = map.[id]
                 let t = modified s t
                 map <- map.SetItem(id, t)
             | Removed s -> 
-                let id = getId s
+                let id = identify s
                 let t = map.[id]
                 removed s t
                 map <- map.Remove id
