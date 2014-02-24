@@ -40,6 +40,8 @@ module Seq =
 let inline curry f a b = f (a, b)
 let inline uncurry f (a, b) = f a b
 
+let isSame a b = obj.ReferenceEquals(a, b)
+
 (** BRICK, ENVIRONMENT **)
 
 type Brick = interface end
@@ -381,6 +383,8 @@ module IdSet =
         | Modified of 'v
         | Removed of 'v
 
+    type ChangeSet<'v> = Change<'v> seq
+
     let diff (getId: 'v -> Id) (s1:'v idset) (s2:'v idset) = 
         // tbd: combine finding added / modified
         let added = 
@@ -406,6 +410,9 @@ module IdSet =
     (* projector
         A set projector projects set differences to three functions. Its main use is to
         project id based incremental set differences to operating system calls.
+
+        Because a changeset brick may result to the same change set when it did not got rebuilt,
+        the projector stores the latest changeset and ignores it if it is provided again.
     *)
 
     type Projector<'s, 't>
@@ -416,9 +423,17 @@ module IdSet =
             removed: 's -> 't -> unit
         ) =
 
+        let mutable latest: ChangeSet<'s> option = None
         let mutable map: HashMap<Id, 't> = HashMap.Empty
 
-        member this.project change =
+        member this.project changeSet = 
+            match latest with
+            | Some latest when isSame latest changeSet -> ()
+            | _ ->
+            changeSet |> Seq.iter this.projectChange
+            latest <- Some changeSet
+
+        member private this.projectChange change =
             match change with
             | Added s ->
                 let t = added s
