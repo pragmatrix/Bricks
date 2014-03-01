@@ -220,8 +220,10 @@ type Program =
     the transaction.
 *)
 
-type Transaction = Environment * Write list
-type TransactionM = Transaction -> Transaction
+
+type Transaction = Environment -> Environment
+type TransactionState = Environment * Write list
+type TransactionM = TransactionState -> TransactionState
 
 type TransactionBuilder() =
     member this.Bind (brick: 'value brick, cont: 'value -> TransactionM) : TransactionM = 
@@ -232,7 +234,7 @@ type TransactionBuilder() =
     member this.Zero () = id
     member this.Yield _ = id
 
-    member this.Run (t : TransactionM): (Environment -> Environment) = 
+    member this.Run (t : TransactionM): Transaction = 
         fun env -> 
             let (env, wl) = t (env, [])
             wl |> List.rev |> env.commitWrites
@@ -431,6 +433,9 @@ module IdSet =
 
         let mutable latest: ChangeSet<'s> option = None
         let mutable map: HashMap<Id, 't> = HashMap.Empty
+
+        member this.empty = map.Count = 0
+        member this.values = map.Values
 
         member this.project changeSet = 
             match latest with
