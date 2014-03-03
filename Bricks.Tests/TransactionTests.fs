@@ -10,7 +10,7 @@ type TransactionTests() =
 
 
     [<Test>]
-    member this.transactionSet() =
+    member this.transactionWrite() =
         
         let a = brick { return 3 }
         let c = brick {

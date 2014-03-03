@@ -1,4 +1,4 @@
-﻿module DiffTests
+﻿module MemoTests
 
 open NUnit.Framework
 open FsUnit

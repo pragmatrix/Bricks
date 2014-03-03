@@ -34,7 +34,6 @@ type GCTests() =
             c2 |> should equal 8
             let! va1 = valueOf a
             va1 |> should equal (Some 3)
-            collect
             let! va2 = valueOf a
             va2 |> should equal (None)
         }

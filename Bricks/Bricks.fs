@@ -8,6 +8,8 @@ open System.Collections.Immutable
 open System.Collections.Generic
 open System.Linq
 
+open Chain
+
 (* *)
 
 type HashSet = ImmutableHashSet
@@ -43,172 +45,125 @@ module Seq =
 
 let inline curry f a b = f (a, b)
 let inline uncurry f (a, b) = f a b
+let inline private (|?) (a: 'a option) b = if a.IsSome then a.Value else b
 
 let isSame a b = obj.ReferenceEquals(a, b)
 
 (** BRICK, ENVIRONMENT **)
 
-type Brick = interface end
+type Brick =
+    abstract member addReferrer : Brick -> unit
+    abstract member removeReferrer : Brick -> unit
+    abstract member invalidate : bool -> unit
+    abstract member tryCollect : unit -> unit
+    
 
+type Trace = (Brick * Chain) list
 
-let defaultInvalidator env _ = env
+type ComputationResult<'v> = Trace * 'v chain
 
-type private BrickInvalidator = Environment -> Brick -> Environment
+type Computation<'v> = Brick<'v> -> ComputationResult<'v>
 
-and BrickState = 
-    { value: obj; trace: Brick list; invalidator: BrickInvalidator; referrer: Brick set }
-    with 
-        member this.addReferrer referrer =
-            { this with referrer = this.referrer.Add referrer }
-        member this.removeReferrer referrer = 
-            { this with referrer = this.referrer.Remove referrer }
+and Brick<'v>(f : Computation<'v>) =
+    let mutable _trace : Trace = []
+    let mutable _chain : 'v chain = Chain.empty()
+    let mutable _valid = false
+    let mutable _referrer = set.empty
 
-        static member make value trace invalidator =
-            { value= value; trace = trace; invalidator = invalidator; referrer = set.empty }
+    member this.chain = _chain
+    member internal this.valid = _valid
+    member internal this.value : 'v option =
+        if (_chain.atEnd) then None else Some _chain.value
 
-and Environment = 
-    {
-        values: HashMap<Brick, BrickState>;
-        orphans: Brick set;
-    }
-    with 
-        member this.add brick state =
-            let trace = state.trace
-            let this = trace |> List.fold (fun (env:Environment) r -> env.addReferrer r brick) this
-            let values = this.values.Add(brick, state)
-            { this with values = values }
+    interface Brick with
+        member this.addReferrer r =
+            _referrer <- _referrer.Add r
 
-        member this.invalidate (brick: Brick) = this.invalidate [brick]
-        member this.invalidate (bricks : Brick list) =
+        member this.removeReferrer r =
+            _referrer <- _referrer.Remove r
 
-            match bricks with
-            | [] -> this
-            | brick::rest ->
+        member this.invalidate collect =
+            if (not _valid) then () else
+            _valid <- false
+            // tbd: incrementally change referrer in evaluation
+            _trace |> List.iter 
+                (fun (dep, _) -> 
+                    dep.removeReferrer this
+                    if collect then dep.tryCollect())
+            _referrer |> Seq.iter (fun b -> b.invalidate false)
+            _referrer <- set.empty
 
-            match this.values.get brick with
-            | None -> this.invalidate rest
-            | Some {value=value; trace=trace; invalidator=invalidator; referrer=referrer} ->
-                
-            let this = {this with values = this.values.Remove brick }
+        member this.tryCollect() =
+            // the system's GC should take care of the invalid ones, because ATM the
+            // invalid ones can not have referrers pointing to it.
+            if (_valid && _referrer.Count = 0) then (this:>Brick).invalidate true
 
-            (* remove all referrer *)
-            let this = trace |> List.fold (fun (env:Environment) r -> env.removeReferrer r brick ) this
+    member this.evaluate() : 'v chain = 
+        if _valid then _chain else
+        let t, c = f this
+        // link new referrer
+        t |> List.iter (fun (dep, _) -> dep.addReferrer this)
+        // gc: check if the former dependencies don't have any referrers anymore and clean them up.
+        _trace |> List.iter (fun (dep, _) -> dep.tryCollect())
 
-            let orphans = trace |> List.filter (fun dep -> this.hasValue dep && not (this.hasReferrer dep))
-            let this = { this with orphans = this.orphans.Union orphans }
+        _trace <- t
+        _chain <- c
+        _valid <- true
+        c
 
-            (* call the invalidator as late as possible so that it sees a consistently connected graph *)
-            let this = invalidator this brick
+    member this.write v =
+        this.invalidate()
+        _trace <- []
+        _chain <- _chain.append v
+        _valid <- true
 
-            this.invalidate ((Seq.toList referrer) @ rest)
+    member this.reset() = 
+        this.invalidate()
 
-        member this.commitWrites writes = 
-            let commitValue (this:Environment) (brick : Brick, value_)  =
-                let this = this.invalidate brick
-                match value_ with
-                | None -> this
-                | Some value -> this.add brick (BrickState.make value [] defaultInvalidator)
+    member this.invalidate() =
+        (this :> Brick).invalidate false
 
-            writes |> List.fold commitValue this
-
-        member this.collect() =
-            let rec collectRec this = 
-                if this.orphans.Count = 0 then this else
-                let batch = this.orphans |> Seq.filter (this.hasReferrer >> not) |> Seq.toList
-                let this = { this with orphans = set.empty }
-                let this = this.invalidate batch
-                collectRec this
-
-            collectRec this
-
-        member this.hasValue b = this.values.has b
-
-        member private this.addReferrer brick referrer =
-            match this.values.get brick with
-            | None -> this
-            | Some state ->
-            let state = state.addReferrer referrer
-            this.setState brick state
-            
-        member private this.removeReferrer brick referrer = 
-            match this.values.get brick with
-            | None -> this
-            | Some state ->
-            let state = state.removeReferrer referrer
-            this.setState brick state
-
-        member private this.hasReferrer brick = 
-            match this.values.get brick with
-            | None -> false
-            | Some state -> state.referrer.Count <> 0
-
-        member private this.setState brick state =
-            { this with values = this.values.SetItem(brick, state) }
-
-
-        static member empty = 
-            { values = HashMap.Empty; orphans = set.Empty }
-
-type Computation = Environment -> (Environment * BrickState)
-
-type Brick<'v>(f : Computation) =
-    interface Brick
-    with 
-        member this.evaluate (env:Environment) : Environment * 'v = 
-            let values = env.values
-            if values.ContainsKey this then
-                env, unbox values.[this].value
-            else
-            let env, state = f env
-            let v = unbox state.value
-            let env = env.add this state
-            env, v
-              
+    
 
 type 't brick = Brick<'t>
 
 let private makeBrick<'v> f = Brick<'v>(f)
 
+let private chainValue c = c.next.Value |> fst
+
 type BrickBuilder() =
     (* tbd: instead of chaining the computation expression internal closure bricks, we could combine them *)
     member this.Bind (dependency: 'dep brick, cont: 'dep -> 'next brick) : 'next brick =
-        fun env ->
-            let env, depValue = dependency.evaluate env;
-            let contBrick = cont depValue
-            let env, value = contBrick.evaluate env
-            env , BrickState.make value [dependency; contBrick] defaultInvalidator
+        fun _ ->
+            let depChain = dependency.evaluate()
+            let contBrick = cont (depChain.value)
+            let chain = contBrick.evaluate()
+            [(dependency:>Brick, depChain:>Chain); (contBrick:>Brick, chain:>Chain)], chain
         |> makeBrick
 
     (* need to wrap this in a new brick here, to allow a shadow write later on *)
     member this.ReturnFrom (brick: 'value brick) = 
-        fun env ->
-            let env, value = brick.evaluate env;
-            env, BrickState.make value [brick] defaultInvalidator
+        fun _ ->
+            let value = brick.evaluate();
+            [brick:>Brick, value:>Chain], value
         |> makeBrick
 
     member this.Return value = 
-        fun env -> env, BrickState.make value [] defaultInvalidator
+        fun _ -> [], Chain.single value
         |> makeBrick
 
 let brick = new BrickBuilder()
 
 (* PROGRAM *)
 
-type Write = Brick * (obj option)
+type Program() =
+    member this.evaluate (brick: 'v brick) : 'v = 
+        brick.evaluate() |> chainValue
 
-type Program = 
-    { 
-        env: Environment; 
-    }
-    with
-        member this.evaluate (brick: 'v brick) : Program * 'v = 
-            let env,v = brick.evaluate this.env
-            { this with env = env }, v
+    member this.collect() : Program =
+        this
 
-        member this.collect() : Program =
-            { this with env = this.env.collect() }
-
-        static member empty = { env = Environment.empty }
+    static member empty = Program()
 
 
 (* Transaction
@@ -221,25 +176,27 @@ type Program =
 *)
 
 
-type Transaction = Environment -> Environment
-type TransactionState = Environment * Write list
+// tbd: we could just chain functions here, so TransactionState could be unit -> unit
+
+type Write = unit -> unit
+
+type Transaction = unit -> unit
+type TransactionState = Write list
 type TransactionM = TransactionState -> TransactionState
 
 type TransactionBuilder() =
     member this.Bind (brick: 'value brick, cont: 'value -> TransactionM) : TransactionM = 
-        fun (env, wl) ->
-            let env, value = brick.evaluate env
-            cont value (env, wl)
+        fun state ->
+            let chain = brick.evaluate()
+            cont chain.value state
 
     member this.Zero () = id
     member this.Yield _ = id
 
     member this.Run (t : TransactionM): Transaction = 
-        fun env -> 
-            let (env, wl) = t (env, [])
-            wl |> List.rev |> env.commitWrites
-
-//    member this.Return p = p
+        fun () -> 
+            let state = t []
+            state |> List.rev |> List.iter (fun w -> w())
 
     member this.For(seq : TransactionM, cont: unit -> TransactionM) : TransactionM =
         fun t ->
@@ -249,14 +206,14 @@ type TransactionBuilder() =
     [<CustomOperation("write")>]
     member this.Write(nested : TransactionM, brick: 'v brick, value: 'v) =
         fun t ->
-            let (env, wl) = nested t
-            (env, (brick :> Brick, Some (value :> obj)) :: wl)
+            let state = nested t
+            (fun () -> brick.write value) :: state
             
     [<CustomOperation("reset")>]
-    member this.Reset(nested: TransactionM, brick : Brick) =
+    member this.Reset(nested: TransactionM, brick : 'v Brick) =
         fun t ->
-            let (env, wl) = nested t
-            (env, (brick, None) :: wl)
+            let state = nested t
+            (fun () -> brick.reset()) :: state
 
 let transaction = new TransactionBuilder()
 
@@ -273,14 +230,13 @@ type ProgramBuilder() =
 
     member this.Bind (brick: 'value brick, cont: 'value -> ProgramM) : ProgramM = 
         fun p ->
-            let p, v = p.evaluate brick
-            cont v p
+            let chain = brick.evaluate()
+            cont (chain.value) p
 
     member this.Bind (vo: ValueOf<'value>, cont: 'value option -> ProgramM) : ProgramM =
         fun p ->
-            let env = p.env
-            let hasValue, evaluationResult = env.values.TryGetValue vo.Brick
-            let v = if hasValue then Some (unbox evaluationResult.value) else None
+            let brick = vo.Brick
+            let v = if brick.valid then vo.Brick.value else None
             cont v p
 
     member this.Zero () = id
@@ -292,10 +248,11 @@ type ProgramBuilder() =
             cont() p
 
     [<CustomOperation("apply")>]
-    member this.Apply(nested : ProgramM, transaction: (Environment -> Environment)) = 
+    member this.Apply(nested : ProgramM, transaction: Transaction) = 
         fun p ->
             let p = nested p
-            {p with env = transaction p.env}
+            transaction()
+            p
 
     [<CustomOperation("collect")>]
     member this.Collect(nested : ProgramM) =
@@ -346,19 +303,17 @@ let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
     The value of a memo brick is (previousValue, currentValue)
 *)
 
+
 let memo (def:'v) (source:'v brick) : ('v * 'v) brick =
 
-    let memoBrick = brick { return def }
-    fun env ->
-            
-        let env, pv = memoBrick.evaluate env
-        let env, v = source.evaluate env
-        let invalidator env brick = 
-            let env = defaultInvalidator env brick
-            let t = transaction { write memoBrick v }
-            t env
-
-        env, BrickState.make (pv, v) [memoBrick; source] invalidator
+    fun (b:('v*'v) brick) ->
+        let chain = source.evaluate()
+        let prev = 
+            match b.value with
+            | Some (_, v) -> v
+            | None -> def
+        let newValue = (prev, chain.value)
+        [source :> Brick, chain :> Chain], b.chain.append newValue
     |> makeBrick
 
 (*

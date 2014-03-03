@@ -20,17 +20,8 @@ type BrickTests() =
     [<Test>]
     member this.simpleEvaluation() =
 
-        let env = Environment.empty
-        let _,r = c.evaluate env
-        r |> should equal 15
-
-    [<Test>]
-    member this.collectsTraces() = 
-        let env = Environment.empty
-        let env,_ = c.evaluate env
-        printf "%A" env
-        // note that c itself is not dependent on a / b directly but on an internal continuation brick.
-        env.values.[c].trace.Length |> should equal 2
+        let r = c.evaluate()
+        r.value |> should equal 15
 
     [<Test>]
     member this.returnFromCreatesANewBrick() =
