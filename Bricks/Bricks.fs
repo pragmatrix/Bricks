@@ -257,12 +257,6 @@ type ProgramBuilder() =
             transaction()
             p
 
-    [<CustomOperation("collect")>]
-    member this.Collect(nested : ProgramM) =
-        fun p ->
-            let p = nested p
-            p.collect()
-
 let program = new ProgramBuilder()
 
 (** BASIC COMBINATORS **)
