@@ -9,7 +9,7 @@ open Bricks
 type GCTests() =
 
     [<Test>]
-    member this.GCinvalidatesOrphan() =
+    member this.GCInvalidatesOrphanByWrite() =
         let a = brick { return 3 }
 
         let b = brick {
@@ -22,26 +22,46 @@ type GCTests() =
             return b * 4
         }
 
-        let overwriteB = transaction {
-                write b 2
-            }
-
         let p = program {
             let! c1 = c
             c1 |> should equal 36
-            apply overwriteB
+            apply (transaction { write b 2 })
             let! c2 = c
             c2 |> should equal 8
             let! va1 = valueOf a
-            va1 |> should equal (Some 3)
-            let! va2 = valueOf a
-            va2 |> should equal (None)
+            va1 |> should equal None
         }
 
         p Program.empty |> ignore
 
     [<Test>]
-    member this.GCDoesNotInvalidateOrphanThatWasReused() =
+    member this.GCInvalidatesOrphanByNotEvaluating() =
+        let a = brick { return 3 }
+
+        let useA = brick { return true }
+
+        let c = brick {
+            let! useA = useA
+            if useA then
+                return! a
+            else
+                return 0
+           }
+
+        let p = program {
+            let! c1 = c
+            c1 |> should equal 3
+            apply (transaction { write useA false })
+            let! c2 = c
+            c2 |> should equal 0
+            let! va1 = valueOf a
+            va1 |> should equal None
+        }
+
+        p Program.empty |> ignore
+
+    [<Test>]
+    member this.GCDoesNotInvalidateSharedDependency() =
         let a = brick { return 3 }
 
         let b = brick {
@@ -51,29 +71,18 @@ type GCTests() =
 
         let c = brick {
             let! b = b
-            return b * 4
+            let! a = a
+            return b * a
         }
-
-        let overwriteB = transaction {
-                write b 2
-            }
-
-        let resetB = transaction { reset b }
 
         let p = program {
             let! c1 = c
-            c1 |> should equal 36
-            apply overwriteB
+            c1 |> should equal 27
+            apply (transaction { write b 2 } )
             let! c2 = c
-            c2 |> should equal 8
+            c2 |> should equal 6
             let! va1 = valueOf a
             va1 |> should equal (Some 3)
-            apply resetB
-            let! c3 = c
-            c3 |> should equal 36
-            collect
-            let! va2 = valueOf a
-            va2 |> should equal (Some 3)
         }
 
         p Program.empty |> ignore

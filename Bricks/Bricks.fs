@@ -54,9 +54,16 @@ let isSame a b = obj.ReferenceEquals(a, b)
 type Brick =
     abstract member addReferrer : Brick -> unit
     abstract member removeReferrer : Brick -> unit
-    abstract member invalidate : bool -> unit
+    abstract member invalidate : unit -> unit
     abstract member tryCollect : unit -> unit
-    
+
+
+[<AutoOpen>]
+module BrickExtensions =
+    type Brick with
+        member this.removeReferrerAndTryCollect referrer =
+            this.removeReferrer referrer
+            this.tryCollect()
 
 type Trace = (Brick * Chain) list
 
@@ -82,28 +89,23 @@ and Brick<'v>(f : Computation<'v>) =
         member this.removeReferrer r =
             _referrer <- _referrer.Remove r
 
-        member this.invalidate collect =
+        member this.invalidate() =
             if (not _valid) then () else
             _valid <- false
-            // tbd: incrementally change referrer in evaluation
-            _trace |> List.iter 
-                (fun (dep, _) -> 
-                    dep.removeReferrer this
-                    if collect then dep.tryCollect())
-            _referrer |> Seq.iter (fun b -> b.invalidate false)
-            _referrer <- set.empty
+            _referrer |> Seq.iter (fun b -> b.invalidate())
 
         member this.tryCollect() =
-            // the system's GC should take care of the invalid ones, because ATM the
-            // invalid ones can not have referrers pointing to it.
-            if (_valid && _referrer.Count = 0) then (this:>Brick).invalidate true
+            if (not _valid || _referrer.Count <> 0) then () else
+            (this:>Brick).invalidate()
+            _trace |> List.iter (fun (dep, _) -> dep.removeReferrerAndTryCollect this)
 
     member this.evaluate() : 'v chain = 
         if _valid then _chain else
         let t, c = f this
-        // link new referrer
+        // relink referrers (tbd: do this incrementally)
+        _trace |> List.iter (fun (dep, _) -> dep.removeReferrer this)
         t |> List.iter (fun (dep, _) -> dep.addReferrer this)
-        // gc: check if the former dependencies don't have any referrers anymore and clean them up.
+
         _trace |> List.iter (fun (dep, _) -> dep.tryCollect())
 
         _trace <- t
@@ -113,6 +115,7 @@ and Brick<'v>(f : Computation<'v>) =
 
     member this.write v =
         this.invalidate()
+        _trace |> List.iter (fun (dep, _) -> dep.removeReferrerAndTryCollect this)
         _trace <- []
         _chain <- _chain.append v
         _valid <- true
@@ -121,7 +124,7 @@ and Brick<'v>(f : Computation<'v>) =
         this.invalidate()
 
     member this.invalidate() =
-        (this :> Brick).invalidate false
+        (this :> Brick).invalidate()
 
     
 

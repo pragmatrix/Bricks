@@ -114,6 +114,27 @@ type TransactionTests() =
 
         p Program.empty |> ignore
 
+    [<Test>]
+    member this.aWriteCanNotBeInvalidated() =
+        let a = brick { return 3 }
+        let b = brick { 
+            let! a = a 
+            return a * 2}
 
+        let p = program {
+            let! v = b
+            printf "%d\n" v
+            v |> should equal 6
+            apply (transaction { write b 4 })
+            let! v = b
+            printf "%d\n" v
+            v |> should equal 4
+            apply (transaction { write a 0 })
+            let! v = b
+            printf "%d\n" v
+            v |> should equal 4
+        }
+
+        p Program.empty |> ignore
 
 
