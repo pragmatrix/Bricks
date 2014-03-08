@@ -135,25 +135,22 @@ let private makeBrick<'v> f = Brick<'v>(f)
 let private chainValue c = c.next.Value |> fst
 
 type BrickBuilder() =
-    (* tbd: instead of chaining the computation expression internal closure bricks, we could combine them *)
-    member this.Bind (dependency: 'dep brick, cont: 'dep -> 'next brick) : 'next brick =
-        fun _ ->
+    member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
+        fun b ->
             let depChain = dependency.evaluate()
-            let contBrick = cont (depChain.value)
-            let chain = contBrick.evaluate()
-            [(dependency:>Brick, depChain:>Chain); (contBrick:>Brick, chain:>Chain)], chain
-        |> makeBrick
+            let contDep, contChain = cont (depChain.value) b
+            (dependency:>Brick, depChain:>Chain) :: contDep, contChain
 
-    (* need to wrap this in a new brick here, to allow a shadow write later on *)
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
             let value = brick.evaluate();
             [brick:>Brick, value:>Chain], value
-        |> makeBrick
 
     member this.Return value = 
         fun _ -> [], Chain.single value
-        |> makeBrick
+
+    member this.Run comp = makeBrick comp
+
 
 let brick = new BrickBuilder()
 
