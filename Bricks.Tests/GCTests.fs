@@ -4,6 +4,7 @@ open NUnit.Framework
 open FsUnit
 
 open Bricks
+open System
 
 [<TestFixture>]
 type GCTests() =
@@ -86,3 +87,44 @@ type GCTests() =
         }
 
         p Program.empty |> ignore
+
+    [<Test>]
+    member this.NativeGCCollectsTemporarilyUsedBrick() = 
+        let a = brick { return 3 }
+        let b = brick {
+                let!a = a
+                return a*2
+            }
+
+        let newTmp() = brick {
+            let! a = a
+            return a * 3
+            }
+
+
+        let runProgram() = 
+            let tmp = newTmp()
+
+            let p = program {
+                // be sure a and b are evaluated
+                let! b = b
+                b |> should equal 6
+                let! tmp = tmp
+                tmp |> should equal 9
+            }
+
+            p Program.empty |> ignore
+            WeakReference(p), WeakReference(tmp)
+
+        let weakProgram, weakTemp = runProgram()
+
+        // now the program can be collected
+        GC.Collect(2, GCCollectionMode.Forced, true)
+        weakProgram.IsAlive |> should equal false
+        weakTemp.IsAlive |> should equal false
+
+        // be sure a&b stay in memory for this test.
+        // (gc may detect that they are not anymore used before the Weak tests above)
+        printf "%A" a
+        printf "%A" b
+
