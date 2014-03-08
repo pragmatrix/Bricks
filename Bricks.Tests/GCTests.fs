@@ -119,7 +119,7 @@ type GCTests() =
         let weakProgram, weakTemp = runProgram()
 
         // now the program can be collected
-        GC.Collect(2, GCCollectionMode.Forced, true)
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true)
         weakProgram.IsAlive |> should equal false
         weakTemp.IsAlive |> should equal false
 
