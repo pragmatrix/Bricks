@@ -91,10 +91,6 @@ type GCTests() =
     [<Test>]
     member this.NativeGCCollectsTemporarilyUsedBrick() = 
         let a = brick { return 3 }
-        let b = brick {
-                let!a = a
-                return a*2
-            }
 
         let newTmp() = brick {
             let! a = a
@@ -107,8 +103,6 @@ type GCTests() =
 
             let p = program {
                 // be sure a and b are evaluated
-                let! b = b
-                b |> should equal 6
                 let! tmp = tmp
                 tmp |> should equal 9
             }
@@ -123,8 +117,8 @@ type GCTests() =
         weakProgram.IsAlive |> should equal false
         weakTemp.IsAlive |> should equal false
 
-        // be sure a&b stay in memory for this test.
+        // be sure a stays in memory.
         // (gc may detect that they are not anymore used before the Weak tests above)
         printf "%A" a
-        printf "%A" b
+
 
