@@ -90,14 +90,14 @@ and Brick<'v>(f : Computation<'v>) =
             _referrer <- _referrer.Remove r
 
         member this.invalidate() =
-            if (not _valid) then () else
-            _valid <- false
-            _referrer |> Seq.iter (fun b -> b.invalidate())
+            if _valid then
+                _valid <- false
+                _referrer |> Seq.iter (fun b -> b.invalidate())
 
         member this.tryCollect() =
-            if (not _valid || _referrer.Count <> 0) then () else
-            (this:>Brick).invalidate()
-            _trace |> List.iter (fun (dep, _) -> dep.removeReferrerAndTryCollect this)
+            if (_valid && _referrer.Count = 0) then
+                (this:>Brick).invalidate()
+                _trace |> List.iter (fun (dep, _) -> dep.removeReferrerAndTryCollect this)
 
     member this.evaluate() : 'v chain = 
         if _valid then _chain else
@@ -225,7 +225,11 @@ type Program(_runner : ProgramM) =
             _deps |> List.iter (fun d -> d.tryCollect())
             
     member this.run() =
-        _deps <- _runner()
+        let newDeps = _runner()
+        _deps.Except(newDeps) |> Seq.iter (fun d -> d.tryCollect())
+        _deps <- newDeps
+
+    member this.apply(t: Transaction) = t()
 
     member this.evaluate (brick: 'v brick) : 'v = 
         brick.evaluate() |> chainValue

@@ -107,17 +107,51 @@ type GCTests() =
             }
 
             p.run()
-            WeakReference(p), WeakReference(tmp)
+            WeakReference(tmp)
 
-        let weakProgram, weakTemp = runProgram()
+        let weakTemp = runProgram()
 
         // now the program can be collected
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true)
-        weakProgram.IsAlive |> should equal false
         weakTemp.IsAlive |> should equal false
 
         // be sure a stays in memory.
         // (gc may detect that they are not anymore used before the Weak tests above)
         printf "%A" a
 
+
+    [<Test>]
+    member this.NativeGCCollectsTemporarilyUsedBrickFromRunBefore() = 
+        let a = brick { return 3 }
+
+        let newTmp(mul) = brick {
+            let! a = a
+            return a * mul
+            }
+
+        let runProgram() = 
+            let tmps = [| newTmp(0); newTmp(1) |]
+            let current = brick { return 0; }
+            use p = program {
+                let! c = current
+                let! tmp = tmps.[c]
+                printf "tmp: %A" tmp
+                tmp |> should equal (3 * c)
+            }
+
+            p.run()
+            p.apply(transaction {write current 1})
+            p.run()
+            WeakReference(tmps.[0]), WeakReference(tmps.[1])
+
+        let weakTemp, weakTemp2 = runProgram()
+
+        // now the program can be collected
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true)
+        weakTemp.IsAlive |> should equal false
+        weakTemp2.IsAlive |> should equal false
+
+        // be sure a stays in memory.
+        // (gc may detect that they are not anymore used before the Weak tests above)
+        printf "%A" a
 
