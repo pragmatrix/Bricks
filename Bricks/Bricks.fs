@@ -222,7 +222,7 @@ type Program(_runner : ProgramM) =
 
     interface IDisposable with
         member this.Dispose() =
-            ()
+            _deps |> List.iter (fun d -> d.tryCollect())
             
     member this.run() =
         _deps <- _runner()

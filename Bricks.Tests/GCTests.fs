@@ -100,7 +100,7 @@ type GCTests() =
         let runProgram() = 
             let tmp = newTmp()
 
-            let p = program {
+            use p = program {
                 // be sure a and b are evaluated
                 let! tmp = tmp
                 tmp |> should equal 9
