@@ -154,17 +154,6 @@ type BrickBuilder() =
 
 let brick = new BrickBuilder()
 
-(* PROGRAM *)
-
-type Program() =
-    member this.evaluate (brick: 'v brick) : 'v = 
-        brick.evaluate() |> chainValue
-
-    member this.collect() : Program =
-        this
-
-    static member empty = Program()
-
 
 (* Transaction
 
@@ -217,42 +206,62 @@ type TransactionBuilder() =
 
 let transaction = new TransactionBuilder()
 
-type ProgramM = Program -> Program
 
 type ValueOf<'v>(brick:Brick<'v>) = 
     member this.Brick = brick
 
 let valueOf brick = ValueOf(brick)
 
+
+(* PROGRAM *)
+
+type ProgramM = unit -> Brick list
+
+type Program(_runner : ProgramM) =
+    let mutable _deps : Brick list = []
+
+    interface IDisposable with
+        member this.Dispose() =
+            ()
+            
+    member this.run() =
+        _deps <- _runner()
+
+    member this.evaluate (brick: 'v brick) : 'v = 
+        brick.evaluate() |> chainValue
+
+
 type ProgramBuilder() =
 
     (* A regular let! is the isolated evaluation of a root brick in the context of the program *)
 
     member this.Bind (brick: 'value brick, cont: 'value -> ProgramM) : ProgramM = 
-        fun p ->
+        fun () ->
             let chain = brick.evaluate()
-            cont (chain.value) p
+            (brick :> Brick) :: cont (chain.value) ()
 
     member this.Bind (vo: ValueOf<'value>, cont: 'value option -> ProgramM) : ProgramM =
-        fun p ->
+        fun () ->
             let brick = vo.Brick
             let v = if brick.valid then vo.Brick.value else None
-            cont v p
+            cont v ()
 
-    member this.Zero () = id
-    member this.Yield _ = id
+    member this.Zero () = fun () -> []
+    member this.Yield _ = fun () -> []
+
+    member this.Run p = new Program(p)
 
     member this.For(seq : ProgramM, cont: unit -> ProgramM) : ProgramM =
-        fun p ->
-            let p = seq p
-            cont() p
+        fun () ->
+            let deps = seq ()
+            deps @ cont() ()
 
     [<CustomOperation("apply")>]
     member this.Apply(nested : ProgramM, transaction: Transaction) = 
-        fun p ->
-            let p = nested p
+        fun () ->
+            let deps = nested ()
             transaction()
-            p
+            deps
 
 let program = new ProgramBuilder()
 

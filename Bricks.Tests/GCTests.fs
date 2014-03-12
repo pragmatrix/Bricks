@@ -33,7 +33,7 @@ type GCTests() =
             va1 |> should equal None
         }
 
-        p Program.empty |> ignore
+        p.run()
 
     [<Test>]
     member this.GCInvalidatesOrphanByNotEvaluating() =
@@ -59,7 +59,7 @@ type GCTests() =
             va1 |> should equal None
         }
 
-        p Program.empty |> ignore
+        p.run()
 
     [<Test>]
     member this.GCDoesNotInvalidateSharedDependency() =
@@ -86,7 +86,7 @@ type GCTests() =
             va1 |> should equal (Some 3)
         }
 
-        p Program.empty |> ignore
+        p.run()
 
     [<Test>]
     member this.NativeGCCollectsTemporarilyUsedBrick() = 
@@ -97,7 +97,6 @@ type GCTests() =
             return a * 3
             }
 
-
         let runProgram() = 
             let tmp = newTmp()
 
@@ -107,7 +106,7 @@ type GCTests() =
                 tmp |> should equal 9
             }
 
-            p Program.empty |> ignore
+            p.run()
             WeakReference(p), WeakReference(tmp)
 
         let weakProgram, weakTemp = runProgram()

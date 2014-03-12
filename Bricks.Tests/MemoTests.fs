@@ -29,4 +29,4 @@ type MemoTests() =
             v |> should equal (2, 4)
         }
 
-        p Program.empty |> ignore
+        p.run()

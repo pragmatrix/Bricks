@@ -30,7 +30,7 @@ type TransactionTests() =
             v |> should equal 20
         }
 
-        p Program.empty |> ignore
+        p.run()
 
     [<Test>]
     member this.continuationGetsInvalidated() = 
@@ -54,7 +54,7 @@ type TransactionTests() =
             v |> should equal 15
         }
 
-        p Program.empty |> ignore
+        p.run()
 
 
     [<Test>]
@@ -80,7 +80,7 @@ type TransactionTests() =
             v |> should equal 20
         }
         
-        p Program.empty |> ignore
+        p.run()
 
     [<Test>]
     member this.transactionReset() =
@@ -112,7 +112,7 @@ type TransactionTests() =
             v |> should equal 15
         }
 
-        p Program.empty |> ignore
+        p.run()
 
     [<Test>]
     member this.aWriteCanNotBeInvalidated() =
@@ -135,6 +135,6 @@ type TransactionTests() =
             v |> should equal 4
         }
 
-        p Program.empty |> ignore
+        p.run()
 
 
