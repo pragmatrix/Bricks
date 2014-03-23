@@ -129,6 +129,7 @@ and Brick<'v>(f : Computation<'v>) =
     
 
 type 't brick = Brick<'t>
+type 't bricks = seq<Brick<'t>>
 
 let private makeBrick<'v> f = Brick<'v>(f)
 
@@ -393,31 +394,31 @@ module IdSet =
             removed: 's -> 't -> unit
         ) =
 
-        let mutable latest: ChangeSet<'s> option = None
-        let mutable map: HashMap<Id, 't> = HashMap.Empty
+        let mutable _latest: ChangeSet<'s> option = None
+        let mutable _map: HashMap<Id, 't> = HashMap.Empty
 
-        member this.empty = map.Count = 0
-        member this.values = map.Values
+        member this.empty = _map.Count = 0
+        member this.values = _map.Values
 
         member this.project changeSet = 
-            match latest with
+            match _latest with
             | Some latest when isSame latest changeSet -> ()
             | _ ->
             changeSet |> Seq.iter this.projectChange
-            latest <- Some changeSet
+            _latest <- Some changeSet
 
         member private this.projectChange change =
             match change with
             | Added s ->
                 let t = added s
-                map <- map.Add(identify s, t)
+                _map <- _map.Add(identify s, t)
             | Modified s -> 
                 let id = identify s
-                let t = map.[id]
+                let t = _map.[id]
                 let t = modified s t
-                map <- map.SetItem(id, t)
+                _map <- _map.SetItem(id, t)
             | Removed s -> 
                 let id = identify s
-                let t = map.[id]
+                let t = _map.[id]
                 removed s t
-                map <- map.Remove id
+                _map <- _map.Remove id
