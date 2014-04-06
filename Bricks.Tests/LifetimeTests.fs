@@ -62,6 +62,5 @@ type LifetimeTests() =
         p.apply t
         p.run()
         instance.Disposed |> should equal false
-        // tbd: bug: writes must trancend GC
         instance.Value |> should equal 2
 
