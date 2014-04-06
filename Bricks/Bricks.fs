@@ -71,16 +71,23 @@ type ComputationResult<'v> = Trace * 'v chain
 
 type Computation<'v> = Brick<'v> -> ComputationResult<'v>
 
-and Brick<'v>(f : Computation<'v>) =
+and Brick<'v>(computation : Computation<'v>) =
+    let mutable _comp = computation
     let mutable _trace : Trace = []
     let mutable _chain : 'v chain = Chain.empty()
+    let mutable _alive = false
     let mutable _valid = false
     let mutable _referrer = set.empty
 
     member this.chain = _chain
     member internal this.valid = _valid
+
+    member internal this.instance : 'v option = 
+        if _alive then this.value else None
+
     member internal this.value : 'v option =
         if (_chain.atEnd) then None else Some _chain.value
+
 
     interface Brick with
         member this.addReferrer r =
@@ -96,12 +103,15 @@ and Brick<'v>(f : Computation<'v>) =
 
         member this.tryCollect() =
             if (_valid && _referrer.Count = 0) then
-                (this:>Brick).invalidate()
+                this.invalidate()
+                match box _chain.value with
+                | :? IDisposable as d -> d.Dispose()
+                | _ -> ()
                 _trace |> List.iter (fun (dep, _) -> dep.removeReferrerAndTryCollect this)
 
     member this.evaluate() : 'v chain = 
         if _valid then _chain else
-        let t, c = f this
+        let t, c = _comp this
         // relink referrers (tbd: do this incrementally)
         _trace |> List.iter (fun (dep, _) -> dep.removeReferrer this)
         t |> List.iter (fun (dep, _) -> dep.addReferrer this)
@@ -110,23 +120,20 @@ and Brick<'v>(f : Computation<'v>) =
 
         _trace <- t
         _chain <- c
+        _alive <- true
         _valid <- true
         c
 
     member this.write v =
         this.invalidate()
-        _trace |> List.iter (fun (dep, _) -> dep.removeReferrerAndTryCollect this)
-        _trace <- []
-        _chain <- _chain.append v
-        _valid <- true
+        _comp <- fun _ -> [], Chain.single v
 
     member this.reset() = 
         this.invalidate()
+        _comp <- computation
 
     member this.invalidate() =
-        (this :> Brick).invalidate()
-
-    
+        (this :> Brick).invalidate()    
 
 type 't brick = Brick<'t>
 type 't bricks = seq<Brick<'t>>
@@ -135,12 +142,26 @@ let private makeBrick<'v> f = Brick<'v>(f)
 
 let private chainValue c = c.next.Value |> fst
 
+type Manifest<'a> = { instantiator: unit -> 'a }
+    with 
+        static member create f = { instantiator = f }
+
+let inline manifest f = Manifest<_>.create f
+
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
         fun b ->
             let depChain = dependency.evaluate()
             let contDep, contChain = cont (depChain.value) b
             (dependency:>Brick, depChain:>Chain) :: contDep, contChain
+
+    member this.Bind (manifest: Manifest<'i>, cont: 'i -> Computation<'i>) : Computation<'i> =
+        fun b ->
+            let i = 
+                match b.instance with
+                | Some i -> i
+                | None -> manifest.instantiator()
+            cont i b
 
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
@@ -155,6 +176,60 @@ type BrickBuilder() =
 
 let brick = new BrickBuilder()
 
+
+(** BASIC COMBINATORS **)
+
+(*
+    Value brick.
+*)
+
+let value (v : 'v) : 'v brick =
+    brick {
+        return v
+    }
+
+(*
+    A conversion brick applies a function to a brick.
+*)
+
+let convert (c: 's -> 't) (source: 's brick) : 't brick =
+    brick {
+        let! s = source
+        return c s
+    }
+
+(*
+    combine two bricks by a funcion.
+*)
+
+let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
+    brick {
+        let! a = a
+        let! b = b
+        return c a b
+    }
+
+(** BRICKS IN TIME **)
+
+(* Memo 
+
+    A memo brick is a brick that is wrapped around another brick and remembers the previous value of it.
+
+    The value of a memo brick is (previousValue, currentValue)
+*)
+
+
+let memo (def:'v) (source:'v brick) : ('v * 'v) brick =
+
+    fun (b:('v*'v) brick) ->
+        let chain = source.evaluate()
+        let prev = 
+            match b.value with
+            | Some (_, v) -> v
+            | None -> def
+        let newValue = (prev, chain.value)
+        [source :> Brick, chain :> Chain], b.chain.append newValue
+    |> makeBrick
 
 (* Transaction
 
@@ -221,9 +296,13 @@ type ProgramM = unit -> Brick list
 type Program(_runner : ProgramM) =
     let mutable _deps : Brick list = []
 
+    member this.roots = _deps
+
     interface IDisposable with
         member this.Dispose() =
             _deps |> List.iter (fun d -> d.tryCollect())
+        
+        
             
     member this.run() =
         let newDeps = _runner()
@@ -251,8 +330,18 @@ type ProgramBuilder() =
             let v = if brick.valid then vo.Brick.value else None
             cont v ()
 
+    // for do! operations that only add some new dependencies
+
+    member this.Bind (deps: 'a brick list, cont: unit -> ProgramM) : ProgramM =
+        this.Bind(deps |> List.map (fun b -> b :> Brick), cont)
+
+    member this.Bind (deps: Brick list, cont: unit -> ProgramM) : ProgramM =
+        fun () ->
+            deps @ cont () ()
+
     member this.Zero () = fun () -> []
     member this.Yield _ = fun () -> []
+    member this.Return _ = fun () -> []
 
     member this.Run p = new Program(p)
 
@@ -270,59 +359,6 @@ type ProgramBuilder() =
 
 let program = new ProgramBuilder()
 
-(** BASIC COMBINATORS **)
-
-(*
-    Value brick.
-*)
-
-let value (v : 'v) : 'v brick =
-    brick {
-        return v
-    }
-
-(*
-    A conversion brick applies a function to a brick.
-*)
-
-let convert (c: 's -> 't) (source: 's brick) : 't brick =
-    brick {
-        let! s = source
-        return c s
-    }
-
-(*
-    With combine, two bricks can be combined by a funcion.
-*)
-
-let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
-    brick {
-        let! a = a
-        let! b = b
-        return c a b
-    }
-
-(** BRICKS IN TIME **)
-
-(* Memo 
-
-    A memo brick is a brick that is wrapped around another brick and remembers the previous value of it.
-
-    The value of a memo brick is (previousValue, currentValue)
-*)
-
-
-let memo (def:'v) (source:'v brick) : ('v * 'v) brick =
-
-    fun (b:('v*'v) brick) ->
-        let chain = source.evaluate()
-        let prev = 
-            match b.value with
-            | Some (_, v) -> v
-            | None -> def
-        let newValue = (prev, chain.value)
-        [source :> Brick, chain :> Chain], b.chain.append newValue
-    |> makeBrick
 
 (*
     A diff brick is a memo brick and a diff function that is applied to output values of the memo.
@@ -342,6 +378,22 @@ type IdSet<'v> = HashMap<Id, 'v>
 
 type 'v idset = IdSet<'v>
 
+//
+// Helper that collects brick dependencies.
+//
+
+type EvaluationContext() = 
+    let mutable _deps : Brick list = List.empty
+
+    member this.evaluate (brick: 'a Brick) = 
+        let r = brick.evaluate()
+        _deps <- (brick :> Brick) :: _deps
+        r
+
+    member this.takeDeps() = 
+        let r = _deps
+        _deps <- List.empty
+        r
 
 module IdSet = 
     
@@ -389,9 +441,9 @@ module IdSet =
     type Projector<'s, 't>
         (
             identify: 's -> Id, 
-            added: 's -> 't, 
-            modified: 's -> 't -> 't, 
-            removed: 's -> 't -> unit
+            added: EvaluationContext -> 's -> 't, 
+            modified: EvaluationContext -> 's -> 't -> 't, 
+            removed: EvaluationContext -> 's -> 't -> unit
         ) =
 
         let mutable _latest: ChangeSet<'s> option = None
@@ -400,25 +452,34 @@ module IdSet =
         member this.empty = _map.Count = 0
         member this.values = _map.Values
 
-        member this.project changeSet = 
+        member this.project changeSet : Brick list = 
             match _latest with
-            | Some latest when isSame latest changeSet -> ()
+            | Some latest when isSame latest changeSet -> []
             | _ ->
-            changeSet |> Seq.iter this.projectChange
+            let depLists = changeSet |> Seq.map this.projectChange |> Seq.flatten
             _latest <- Some changeSet
+            depLists |> Seq.toList
 
         member private this.projectChange change =
             match change with
             | Added s ->
-                let t = added s
+                let ec = EvaluationContext()
+                let t = added ec s
                 _map <- _map.Add(identify s, t)
+                ec.takeDeps()
+
             | Modified s -> 
                 let id = identify s
                 let t = _map.[id]
-                let t = modified s t
+                let ec = EvaluationContext()
+                let t = modified ec s t
                 _map <- _map.SetItem(id, t)
+                ec.takeDeps()
+
             | Removed s -> 
                 let id = identify s
                 let t = _map.[id]
-                removed s t
+                let ec = EvaluationContext()
+                removed ec s t
                 _map <- _map.Remove id
+                ec.takeDeps()

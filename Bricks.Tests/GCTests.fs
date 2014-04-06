@@ -155,3 +155,36 @@ type GCTests() =
         // (gc may detect that they are not anymore used before the Weak tests above)
         printf "%A" a
 
+    [<Test>]
+    member this.GCCollectedWritesTranscend() =
+        let alive = value true
+        let a = value 1
+        let latest = ref 0
+        let p = program {
+            let! alive = alive
+            if (alive) then
+                let! a = a
+                latest := a
+        }
+
+        p.run()
+        !latest |> should equal 1
+
+
+        p.apply (transaction { write a 2 })
+        p.run()
+        !latest |> should equal 2
+
+
+        latest := 0
+        p.apply (transaction { write alive false })
+        p.run()
+        !latest |> should equal 0
+
+        p.apply (transaction {write alive true })
+        p.run()
+        !latest |> should equal 2
+
+        
+
+

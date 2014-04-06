@@ -55,9 +55,11 @@
   <ItemGroup>
     <Compile Include="ChainTests.fs" />
     <Compile Include="BricksTests.fs" />
+    <Compile Include="ProgramTests.fs" />
     <Compile Include="TransactionTests.fs" />
     <Compile Include="MemoTests.fs" />
     <Compile Include="GCTests.fs" />
+    <Compile Include="LifetimeTests.fs" />
     <None Include="packages.config" />
     <None Include="app.config" />
   </ItemGroup>
