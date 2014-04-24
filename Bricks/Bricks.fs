@@ -4,22 +4,21 @@ open System.Collections.Immutable
 
 type HashMap = BrickDefs.HashMap
 type HashMap<'key, 'value> = BrickDefs.HashMap<'key, 'value>
-
-type Program = BricksCore.Program
-type 'v brick = BricksCore.Brick<'v>
-type Transaction = BricksCore.Transaction
-
 type ImmutableDictionary<'k, 'v> with
     member inline this.get k = BrickDefs.map.get this k
     member inline this.has k = BrickDefs.map.has this k
-
-type 't bricks = seq<BricksCore.Brick<'t>>
 
 module bset =
     let inline ofSeq s = BrickSet.bset.ofSeq s
     let inline diff s1 s2 = BrickSet.bset.diff s1 s2
     let inline Added v = BrickSet.bset.Added v
     let inline Removed v = BrickSet.bset.Removed v
+
+type 'v brick = BricksCore.Brick<'v>
+type 't bricks = seq<BricksCore.Brick<'t>>
+
+type Transaction = BricksCore.Transaction
+type Program = BricksCore.Program
 
 let brick = BricksCore.brick
 let program = BricksCore.program
