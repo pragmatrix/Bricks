@@ -55,6 +55,7 @@
   <ItemGroup>
     <Compile Include="ChainTests.fs" />
     <Compile Include="BricksTests.fs" />
+    <Compile Include="BrickSetTests.fs" />
     <Compile Include="ProgramTests.fs" />
     <Compile Include="TransactionTests.fs" />
     <Compile Include="MemoTests.fs" />
@@ -65,11 +66,11 @@
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FSharpx.Collections">
-      <HintPath>..\packages\FSharpx.Collections.1.9.2\lib\net35\FSharpx.Collections.dll</HintPath>
+      <HintPath>..\..\packages\FSharpx.Collections.1.9.2\lib\net35\FSharpx.Collections.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="FsUnit.NUnit">
-      <HintPath>..\packages\FsUnit.1.2.1.0\Lib\Net40\FsUnit.NUnit.dll</HintPath>
+      <HintPath>..\..\packages\FsUnit.1.2.1.0\Lib\Net40\FsUnit.NUnit.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="mscorlib" />
@@ -77,12 +78,12 @@
       <Private>True</Private>
     </Reference>
     <Reference Include="nunit.framework">
-      <HintPath>..\packages\NUnit.2.6.3\lib\nunit.framework.dll</HintPath>
+      <HintPath>..\..\packages\NUnit.2.6.3\lib\nunit.framework.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Collections.Immutable">
-      <HintPath>..\packages\Microsoft.Bcl.Immutable.1.0.30\lib\portable-net45+win8+wp8\System.Collections.Immutable.dll</HintPath>
+      <HintPath>..\..\packages\Microsoft.Bcl.Immutable.1.0.30\lib\portable-net45+win8+wp8\System.Collections.Immutable.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="System.ComponentModel.Composition" />

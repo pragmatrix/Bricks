@@ -12,19 +12,43 @@ open Chain
 
 (* *)
 
+module List =
+    let flatten l = List.collect id l
+
+module Seq = 
+    let flatten l = Seq.collect id l
+
 type HashSet = ImmutableHashSet
 type HashSet<'k> = ImmutableHashSet<'k>
 type 'k set = HashSet<'k>
-
-module set = 
-    let empty<'e> = HashSet<'e>.Empty
-    let ofSeq = HashSet.CreateRange
 
 type HashMap = ImmutableDictionary
 type HashMap<'k, 'v> = ImmutableDictionary<'k, 'v>
 
 type ImmutableHashSet<'v> with
     member this.has v = this.Contains v
+
+module set = 
+    let empty<'e> = HashSet<'e>.Empty
+    let ofSeq = HashSet.CreateRange
+
+    type Change<'v> =
+            | Added of 'v
+            | Removed of 'v
+
+    let diff (s1: 'e set) (s2 : 'e set) = 
+        // tbd: combine finding added / modified
+        let added = 
+            s2
+            |> Seq.filter (s1.has >> not)
+            |> Seq.map Added
+
+        let removed = 
+            s1 
+            |> Seq.filter (s2.has >> not)
+            |> Seq.map Removed
+
+        [removed; added] |> Seq.flatten
 
 type ImmutableDictionary<'k, 'v> with
     member this.get k = 
@@ -36,12 +60,6 @@ type ImmutableDictionary<'k, 'v> with
 type ImmutableDictionary with
     static member fromSeq seq = 
         ImmutableDictionary.CreateRange(Seq.map (fun (k, v) -> KeyValuePair(k, v)) seq)
-
-module List =
-    let flatten l = List.collect id l
-
-module Seq = 
-    let flatten l = Seq.collect id l
 
 let inline curry f a b = f (a, b)
 let inline uncurry f (a, b) = f a b
@@ -69,7 +87,9 @@ type Trace = (Brick * Chain) list
 
 type ComputationResult<'v> = Trace * 'v chain
 
-type Computation<'v> = Brick<'v> -> ComputationResult<'v>
+type Computation<'v> = 'v brick -> ComputationResult<'v>
+
+and 't brick = Brick<'t>
 
 and Brick<'v>(computation : Computation<'v>) =
     let mutable _comp = computation
@@ -135,7 +155,6 @@ and Brick<'v>(computation : Computation<'v>) =
     member this.invalidate() =
         (this :> Brick).invalidate()    
 
-type 't brick = Brick<'t>
 type 't bricks = seq<Brick<'t>>
 
 let private makeBrick<'v> f = Brick<'v>(f)
@@ -362,10 +381,41 @@ let program = new ProgramBuilder()
 
 (*
     A diff brick is a memo brick and a diff function that is applied to output values of the memo.
+
+    tbd: terminology is confusing: we need another name for diffs over time.
 *)
 
-let diff (def: 'v) (diff: 'v -> 'v -> 'd) (source: 'v brick) =
-    source |> memo def |> convert (uncurry diff)
+let diff (def: 'v) (differ: 'v -> 'v -> 'd) (source: 'v brick) =
+    source |> memo def |> convert (uncurry differ)
+
+module bset =
+
+    let private bDiff = diff
+
+    let diff (s: 'v set brick) =
+        bDiff set.empty set.diff s
+
+    type setc<'v> = set.Change<'v>
+
+(* 
+    Creates a brick that receives the unprocessed sequence of values since the last evaluation.
+*)
+
+(*
+
+let track (f: 'v seq -> 'r) (b: 'v brick) =
+    fun brick ->
+        [b], 
+
+*)
+
+(* overloaded combinators *)
+
+(*
+type b =
+    static member map (conv: 'v -> 'w) (d: set.Change<'v> seq brick) =
+        ()
+*)
 
 (* idset
     An id set is a set that organizes data structures that contain a property named id that returns an object.
