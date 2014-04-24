@@ -75,7 +75,6 @@ type Brick =
     abstract member invalidate : unit -> unit
     abstract member tryCollect : unit -> unit
 
-
 [<AutoOpen>]
 module BrickExtensions =
     type Brick with
@@ -91,15 +90,16 @@ type Computation<'v> = 'v brick -> ComputationResult<'v>
 
 and 't brick = Brick<'t>
 
-and Brick<'v>(computation : Computation<'v>) =
+and Brick<'v>(computation : Computation<'v>, ?trace : Trace) =
     let mutable _comp = computation
-    let mutable _trace : Trace = []
+    let mutable _trace : Trace = match trace with Some t -> t | None -> []
     let mutable _chain : 'v chain = Chain.empty()
     let mutable _alive = false
     let mutable _valid = false
     let mutable _referrer = set.empty
 
-    member this.chain = _chain
+    member internal this.chain = _chain
+    member internal this.trace = _trace
     member internal this.valid = _valid
 
     member internal this.instance : 'v option = 
@@ -158,6 +158,7 @@ and Brick<'v>(computation : Computation<'v>) =
 type 't bricks = seq<Brick<'t>>
 
 let private makeBrick<'v> f = Brick<'v>(f)
+let private makeBrickTrace<'v> t f = Brick<'v>(f, t)
 
 let private chainValue c = c.next.Value |> fst
 
@@ -259,7 +260,6 @@ let memo (def:'v) (source:'v brick) : ('v * 'v) brick =
     the transaction.
 *)
 
-
 // tbd: we could just chain functions here, so TransactionState could be unit -> unit
 
 type Write = unit -> unit
@@ -301,7 +301,6 @@ type TransactionBuilder() =
 
 let transaction = new TransactionBuilder()
 
-
 type ValueOf<'v>(brick:Brick<'v>) = 
     member this.Brick = brick
 
@@ -320,8 +319,6 @@ type Program(_runner : ProgramM) =
     interface IDisposable with
         member this.Dispose() =
             _deps |> List.iter (fun d -> d.tryCollect())
-        
-        
             
     member this.run() =
         let newDeps = _runner()
@@ -332,7 +329,6 @@ type Program(_runner : ProgramM) =
 
     member this.evaluate (brick: 'v brick) : 'v = 
         brick.evaluate() |> chainValue
-
 
 type ProgramBuilder() =
 
@@ -399,15 +395,16 @@ module bset =
 
 (* 
     Creates a brick that receives the unprocessed sequence of values since the last evaluation.
-*)
 
-(*
+    This is done by initializing the resulting brick with a trace that points to the chain of
+    the source brick and then grabbing the chain for each new evaluation.
+*)
 
 let track (f: 'v seq -> 'r) (b: 'v brick) =
-    fun brick ->
-        [b], 
-
-*)
+    fun (brick : 'r brick) ->
+        let sequence = (brick.trace.[0] |> snd) :?> Chain<'v> :> 'v seq
+        [b :> Brick, b.chain :> Chain], f sequence |> Chain.single
+    |> makeBrickTrace [b :> Brick, b.chain :> Chain]
 
 (* overloaded combinators *)
 
