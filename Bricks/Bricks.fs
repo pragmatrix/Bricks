@@ -8,8 +8,6 @@ open System.Collections.Immutable
 open System.Collections.Generic
 open System.Linq
 
-open Chain
-
 (* *)
 
 module List =
@@ -82,9 +80,9 @@ module BrickExtensions =
             this.removeReferrer referrer
             this.tryCollect()
 
-type Trace = (Brick * Chain) list
+type Trace = Brick list
 
-type ComputationResult<'v> = Trace * 'v chain
+type ComputationResult<'v> = Trace * 'v
 
 type Computation<'v> = 'v brick -> ComputationResult<'v>
 
@@ -93,21 +91,15 @@ and 't brick = Brick<'t>
 and Brick<'v>(computation : Computation<'v>, ?trace : Trace) =
     let mutable _comp = computation
     let mutable _trace : Trace = match trace with Some t -> t | None -> []
-    let mutable _chain : 'v chain = Chain.empty()
+    let mutable _value : 'v option = None
     let mutable _alive = false
     let mutable _valid = false
     let mutable _referrer = set.empty
 
-    member internal this.chain = _chain
     member internal this.trace = _trace
     member internal this.valid = _valid
-
-    member internal this.instance : 'v option = 
-        if _alive then this.value else None
-
-    member internal this.value : 'v option =
-        if (_chain.atEnd) then None else Some _chain.value
-
+    member internal this.value = _value
+    member internal this.instance : 'v option = if _alive then this.value else None
 
     interface Brick with
         member this.addReferrer r =
@@ -124,29 +116,29 @@ and Brick<'v>(computation : Computation<'v>, ?trace : Trace) =
         member this.tryCollect() =
             if (_valid && _referrer.Count = 0) then
                 this.invalidate()
-                match box _chain.value with
+                match box _value.Value with
                 | :? IDisposable as d -> d.Dispose()
                 | _ -> ()
-                _trace |> List.iter (fun (dep, _) -> dep.removeReferrerAndTryCollect this)
+                _trace |> List.iter (fun dep -> dep.removeReferrerAndTryCollect this)
 
-    member this.evaluate() : 'v chain = 
-        if _valid then _chain else
+    member this.evaluate() : 'v = 
+        if _valid then _value.Value else
         let t, c = _comp this
         // relink referrers (tbd: do this incrementally)
-        _trace |> List.iter (fun (dep, _) -> dep.removeReferrer this)
-        t |> List.iter (fun (dep, _) -> dep.addReferrer this)
+        _trace |> List.iter (fun dep -> dep.removeReferrer this)
+        t |> List.iter (fun dep -> dep.addReferrer this)
 
-        _trace |> List.iter (fun (dep, _) -> dep.tryCollect())
+        _trace |> List.iter (fun dep -> dep.tryCollect())
 
         _trace <- t
-        _chain <- c
+        _value <- Some c
         _alive <- true
         _valid <- true
         c
 
     member this.write v =
         this.invalidate()
-        _comp <- fun _ -> [], Chain.single v
+        _comp <- fun _ -> [], v
 
     member this.reset() = 
         this.invalidate()
@@ -160,8 +152,6 @@ type 't bricks = seq<Brick<'t>>
 let private makeBrick<'v> f = Brick<'v>(f)
 let private makeBrickTrace<'v> t f = Brick<'v>(f, t)
 
-let private chainValue c = c.next.Value |> fst
-
 type Manifest<'a> = { instantiator: unit -> 'a }
     with 
         static member create f = { instantiator = f }
@@ -171,9 +161,9 @@ let inline manifest f = Manifest<_>.create f
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
         fun b ->
-            let depChain = dependency.evaluate()
-            let contDep, contChain = cont (depChain.value) b
-            (dependency:>Brick, depChain:>Chain) :: contDep, contChain
+            let depValue = dependency.evaluate()
+            let contDep, contChain = cont depValue b
+            dependency:>Brick :: contDep, contChain
 
     member this.Bind (manifest: Manifest<'i>, cont: 'i -> Computation<'i>) : Computation<'i> =
         fun b ->
@@ -186,10 +176,10 @@ type BrickBuilder() =
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
             let value = brick.evaluate();
-            [brick:>Brick, value:>Chain], value
+            [brick:>Brick], value
 
     member this.Return value = 
-        fun _ -> [], Chain.single value
+        fun _ -> [], value
 
     member this.Run comp = makeBrick comp
 
@@ -242,13 +232,13 @@ let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
 let memo (def:'v) (source:'v brick) : ('v * 'v) brick =
 
     fun (b:('v*'v) brick) ->
-        let chain = source.evaluate()
+        let value = source.evaluate()
         let prev = 
             match b.value with
             | Some (_, v) -> v
             | None -> def
-        let newValue = (prev, chain.value)
-        [source :> Brick, chain :> Chain], b.chain.append newValue
+        let newValue = (prev, value)
+        [source :> Brick], newValue
     |> makeBrick
 
 (* Transaction
@@ -271,8 +261,8 @@ type TransactionM = TransactionState -> TransactionState
 type TransactionBuilder() =
     member this.Bind (brick: 'value brick, cont: 'value -> TransactionM) : TransactionM = 
         fun state ->
-            let chain = brick.evaluate()
-            cont chain.value state
+            let value = brick.evaluate()
+            cont value state
 
     member this.Zero () = id
     member this.Yield _ = id
@@ -325,10 +315,11 @@ type Program(_runner : ProgramM) =
         _deps.Except(newDeps) |> Seq.iter (fun d -> d.tryCollect())
         _deps <- newDeps
 
-    member this.apply(t: Transaction) = t()
+    member this.apply(t: Transaction) = 
+        t()
 
     member this.evaluate (brick: 'v brick) : 'v = 
-        brick.evaluate() |> chainValue
+        brick.evaluate()
 
 type ProgramBuilder() =
 
@@ -336,8 +327,8 @@ type ProgramBuilder() =
 
     member this.Bind (brick: 'value brick, cont: 'value -> ProgramM) : ProgramM = 
         fun () ->
-            let chain = brick.evaluate()
-            (brick :> Brick) :: cont (chain.value) ()
+            let value = brick.evaluate()
+            brick :> Brick :: cont value ()
 
     member this.Bind (vo: ValueOf<'value>, cont: 'value option -> ProgramM) : ProgramM =
         fun () ->
@@ -400,11 +391,13 @@ module bset =
     the source brick and then grabbing the chain for each new evaluation.
 *)
 
+(*
 let track (f: 'v seq -> 'r) (b: 'v brick) =
     fun (brick : 'r brick) ->
         let sequence = (brick.trace.[0] |> snd) :?> Chain<'v> :> 'v seq
         [b :> Brick, b.chain :> Chain], f sequence |> Chain.single
     |> makeBrickTrace [b :> Brick, b.chain :> Chain]
+*)
 
 (* overloaded combinators *)
 

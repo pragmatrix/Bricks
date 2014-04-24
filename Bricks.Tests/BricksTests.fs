@@ -21,7 +21,7 @@ type BrickTests() =
     member this.simpleEvaluation() =
 
         let r = c.evaluate()
-        r.value |> should equal 15
+        r |> should equal 15
 
     [<Test>]
     member this.returnFromCreatesANewBrick() =
