@@ -30,11 +30,11 @@ let inline valueOf b = BricksCore.valueOf b
 let inline manifest f = BricksCore.manifest f
 let inline memo def source = BricksCore.memo def source
 
-type EvaluationContext = BricksCore.EvaluationContext
+type EvaluationContext = BrickIdSet.EvaluationContext
 
-type 'e idset = BricksCore.IdSet<'e>
+type 'e idset = BrickIdSet.IdSet<'e>
 
 module IdSet = 
-    type Projector<'a, 'b> = BricksCore.IdSet.Projector<'a, 'b>
-    let inline trackChanges i s = BricksCore.IdSet.trackChanges i s
-    let inline fromSeq i s = BricksCore.IdSet.fromSeq i s
+    type Projector<'a, 'b> = BrickIdSet.IdSet.Projector<'a, 'b>
+    let inline trackChanges i s = BrickIdSet.IdSet.trackChanges i s
+    let inline fromSeq i s = BrickIdSet.IdSet.fromSeq i s
