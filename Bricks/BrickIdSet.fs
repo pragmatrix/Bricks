@@ -2,6 +2,7 @@
 
 open BrickDefs
 open BricksCore
+open BrickTime
 
 (* idset
     An id set is a set that organizes data structures that contain a property named id that returns an object.

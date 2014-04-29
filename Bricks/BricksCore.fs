@@ -34,13 +34,13 @@ type Computation<'v> = 'v brick -> ComputationResult<'v>
 
 and 't brick = Brick<'t>
 
-and Brick<'v>(computation : Computation<'v>, ?trace : Trace) =
+and Brick<'v>(computation : Computation<'v>, ?initial: 'v) =
     let mutable _comp = computation
-    let mutable _trace : Trace = match trace with Some t -> t | None -> []
-    let mutable _value : 'v option = None
+    let mutable _trace : Trace = []
+    let mutable _value : 'v option = initial
     let mutable _alive = false
     let mutable _valid = false
-    let mutable _referrer = bset.empty
+    let mutable _referrer = Set.empty
 
     member internal this.trace = _trace
     member internal this.valid = _valid
@@ -95,8 +95,8 @@ and Brick<'v>(computation : Computation<'v>, ?trace : Trace) =
 
 type 't bricks = seq<Brick<'t>>
 
-let private makeBrick<'v> f = Brick<'v>(f)
-let private makeBrickTrace<'v> t f = Brick<'v>(f, t)
+let makeBrick<'v> f = Brick<'v>(f)
+let makeBrickInit<'v> initial f = Brick<'v>(f, initial)
 
 type Manifest<'a> = { instantiator: unit -> 'a }
     with 
@@ -164,28 +164,6 @@ let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
         let! b = b
         return c a b
     }
-
-(** BRICKS IN TIME **)
-
-(* Memo 
-
-    A memo brick is a brick that is wrapped around another brick and remembers the previous value of it.
-
-    The value of a memo brick is (previousValue, currentValue)
-*)
-
-
-let memo (def:'v) (source:'v brick) : ('v * 'v) brick =
-
-    fun (b:('v*'v) brick) ->
-        let value = source.evaluate()
-        let prev = 
-            match b.value with
-            | Some (_, v) -> v
-            | None -> def
-        let newValue = (prev, value)
-        [source :> Brick], newValue
-    |> makeBrick
 
 (* Transaction
 
@@ -310,44 +288,3 @@ type ProgramBuilder() =
             deps
 
 let program = new ProgramBuilder()
-
-
-(*
-    A diff brick is a memo brick and a diff function that is applied to output values of the memo.
-
-    tbd: terminology is confusing: we need another name for diffs over time.
-*)
-
-let diff (def: 'v) (differ: 'v -> 'v -> 'd) (source: 'v brick) =
-    source |> memo def |> convert (uncurry differ)
-
-module bset =
-
-    let private bDiff = diff
-
-    let diff (s: 'v set brick) =
-        bDiff bset.empty bset.diff s
-
-(* 
-    Creates a brick that receives the unprocessed sequence of values since the last evaluation.
-
-    This is done by initializing the resulting brick with a trace that points to the chain of
-    the source brick and then grabbing the chain for each new evaluation.
-*)
-
-(*
-let track (f: 'v seq -> 'r) (b: 'v brick) =
-    fun (brick : 'r brick) ->
-        let sequence = (brick.trace.[0] |> snd) :?> Chain<'v> :> 'v seq
-        [b :> Brick, b.chain :> Chain], f sequence |> Chain.single
-    |> makeBrickTrace [b :> Brick, b.chain :> Chain]
-*)
-
-(* overloaded combinators *)
-
-(*
-type b =
-    static member map (conv: 'v -> 'w) (d: set.Change<'v> seq brick) =
-        ()
-*)
-

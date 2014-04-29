@@ -3,9 +3,12 @@
 open System.Collections
 open System.Collections.Generic
 
+
 (*
     A one producer / multiple consumer value chain
 *)
+
+let private isSame a b = obj.ReferenceEquals(a, b)
 
 type Chain = interface
     end
@@ -32,7 +35,7 @@ type Chain<'a> = { mutable next: ('a * Chain<'a>) option }
             | Some (v, _) -> v
 
         // Adds a value and returns the new end of the chain.
-        member this.produce value =
+        member this.push value =
             if (not this.atEnd) then
                 failwith "chain.produce: not end of chain"
             let newEnd = Chain.empty()
@@ -52,7 +55,7 @@ type Chain<'a> = { mutable next: ('a * Chain<'a>) option }
         member this.append v = 
             match this.next with
             | None -> 
-                this.produce v |> ignore
+                this.push v |> ignore
                 this
             | Some (_, next) ->
                 if (not next.atEnd) then failwith "chain.append: next must be end of chain"
@@ -61,7 +64,7 @@ type Chain<'a> = { mutable next: ('a * Chain<'a>) option }
 
         static member single v = 
             let c = Chain.empty()
-            c.produce v |> ignore
+            c.push v |> ignore
             c
 
         // returns values alongside their next-links
@@ -74,3 +77,16 @@ type Chain<'a> = { mutable next: ('a * Chain<'a>) option }
 
 
 type 'a chain = Chain<'a>
+
+exception AlienChainError of string
+
+let range (b : 'e chain) (e : 'e chain) = 
+    let c = ref b
+    seq {
+        while (not ((!c).atEnd || isSame !c e)) do
+            yield (!c).value
+            c := (!c).next.Value |> snd
+
+        if (not (isSame !c e)) then
+            raise (AlienChainError "end of chain is from a different chain")
+    }

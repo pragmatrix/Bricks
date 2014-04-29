@@ -2,13 +2,15 @@
 
 open BrickDefs
 
-module bset = 
+module Set = 
     let empty<'e> = HashSet<'e>.Empty
     let ofSeq = HashSet.CreateRange
 
-    type Change<'v> =
+    type 'v change =
         | Added of 'v
         | Removed of 'v
+
+    type 'v changes = 'v change seq
 
     let diff (s1: 'e set) (s2 : 'e set) = 
         let added = 
