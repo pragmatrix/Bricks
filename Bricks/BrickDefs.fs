@@ -42,4 +42,5 @@ let inline private (|?) (a: 'a option) b = if a.IsSome then a.Value else b
 let inline isSame a b = obj.ReferenceEquals(a, b)
 
 type b = class
+    static member X = 0
     end

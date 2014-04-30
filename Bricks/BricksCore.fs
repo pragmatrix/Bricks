@@ -108,8 +108,15 @@ type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
         fun b ->
             let depValue = dependency.evaluate()
-            let contDep, contChain = cont depValue b
-            dependency:>Brick :: contDep, contChain
+            let contDep, contValue = cont depValue b
+            dependency:>Brick :: contDep, contValue
+
+    member this.Bind (dependencies: 'dep brick seq, cont: 'dep seq -> Computation<'next>) : Computation<'next> =
+        fun b ->
+            let depValues = dependencies |> Seq.map (fun d -> d.evaluate())
+            let contDep, contValue = cont depValues b
+            let thisDeps = dependencies |> Seq.map (fun d -> d :> Brick) |> Seq.toList
+            thisDeps @ contDep |> Seq.toList, contValue
 
     member this.Bind (manifest: Manifest<'i>, cont: 'i -> Computation<'i>) : Computation<'i> =
         fun b ->
@@ -260,14 +267,21 @@ type ProgramBuilder() =
             let v = if brick.valid then vo.Brick.value else None
             cont v ()
 
+    member this.Bind (deps: 'a brick seq, cont: 'a seq -> ProgramM) : ProgramM =
+        fun () ->
+            let values = deps |> Seq.map (fun b -> b.evaluate())
+            (deps |> Seq.map (fun b -> b :> Brick) |> Seq.toList) @ cont values ()
+
     // for do! operations that only add some new dependencies
 
-    member this.Bind (deps: 'a brick list, cont: unit -> ProgramM) : ProgramM =
-        this.Bind(deps |> List.map (fun b -> b :> Brick), cont)
+    (*
+    member this.Bind (deps: 'a brick seq, cont: unit -> ProgramM) : ProgramM =
+        this.Bind(deps |> Seq.map (fun b -> b :> Brick), cont)
 
-    member this.Bind (deps: Brick list, cont: unit -> ProgramM) : ProgramM =
+    member this.Bind (deps: Brick seq, cont: unit -> ProgramM) : ProgramM =
         fun () ->
-            deps @ cont () ()
+            (deps |> Seq.toList) @ cont () ()
+    *)
 
     member this.Zero () = fun () -> []
     member this.Yield _ = fun () -> []

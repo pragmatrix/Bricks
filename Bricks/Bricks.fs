@@ -1,5 +1,6 @@
 ﻿module Bricks
 
+open BrickDefs
 open System.Collections.Immutable
 
 type HashMap = BrickDefs.HashMap
@@ -8,7 +9,7 @@ type ImmutableDictionary<'k, 'v> with
     member inline this.get k = BrickDefs.Map.get this k
     member inline this.has k = BrickDefs.Map.has this k
 
-module bset =
+module Set =
     let inline ofSeq s = BrickSet.Set.ofSeq s
     let inline diff s1 s2 = BrickSet.Set.diff s1 s2
     let inline Added v = BrickSet.Set.Added v
@@ -27,15 +28,10 @@ let transaction = BricksCore.transaction
 let inline value v = BricksCore.value v
 let inline convert a b = BricksCore.convert a b
 let inline valueOf b = BricksCore.valueOf b
-let inline manifest f = BricksCore.manifest f
-
-type EvaluationContext = BrickIdSet.EvaluationContext
-
-type 'e idset = BrickIdSet.IdSet<'e>
-
-module IdSet = 
-    type Projector<'a, 'b> = BrickIdSet.IdSet.Projector<'a, 'b>
-    let inline trackChanges i s = BrickIdSet.IdSet.trackChanges i s
-    let inline fromSeq i s = BrickIdSet.IdSet.fromSeq i s
+let inline manifest f = BricksCore.manifest f       
 
 let inline memo def source = BrickTime.memo def source
+
+type 'v set = 'v BrickDefs.set
+type b = BrickDefs.b
+

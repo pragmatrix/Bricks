@@ -9,14 +9,14 @@ open Bricks
 type ProgramTests() =
 
     [<Test>]
-    member this.doMayBeUsedToAddAdditionalRoots() =
+    member this.letMayBeUsedToAddAdditionalRoots() =
         let ba = value 10
         let bb = value 20
 
         let p = program {
             let! b = ba
             printf "%A" b
-            do! [bb]
+            let! _ = [bb]
             let! b = ba
             printf "%A" b
         }

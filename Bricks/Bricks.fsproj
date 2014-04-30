@@ -58,7 +58,6 @@
     <Compile Include="BrickSet.fs" />
     <Compile Include="BricksCore.fs" />
     <Compile Include="BrickTime.fs" />
-    <Compile Include="BrickIdSet.fs" />
     <Compile Include="Bricks.fs" />
     <None Include="packages.config" />
   </ItemGroup>

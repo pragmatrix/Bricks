@@ -52,14 +52,14 @@ let inline private makeChannelProc (source : 's channel) (initial: 't) (f : Chan
     let deps = [source :>Brick]
     let sourceHead = ref source.value.Value
     fun (this: 't brick) ->
-        let sourceTail = source.value.Value
+        let sourceTail = source.evaluate()
         let values = Chain.range !sourceHead sourceTail
         sourceHead := sourceTail
         let chain = this.value.Value
         deps, f chain values
     |> makeBrickInit initial
 
-let track (initial: 'v) (tracker: 'v -> 'v -> 'r) (source: 'v brick) : 'r channel =
+let private _track (initial: 'v) (tracker: 'v -> 'v -> 'r) (source: 'v brick) : 'r channel =
 
     let current = ref initial
 
@@ -72,8 +72,8 @@ let track (initial: 'v) (tracker: 'v -> 'v -> 'r) (source: 'v brick) : 'r channe
     |> makeChannel
 
 type b with
-    static member changes (source: 'v set brick) : 'v Set.changes channel =
-        track Set.empty Set.diff source
+    static member track (source: 'v set brick) : 'v Set.changes channel =
+        _track Set.empty Set.diff source
 
     static member map (mapper: 's brick -> 't) (source: 's brick Set.changes channel) : 't Set.changes channel =
 
@@ -111,13 +111,3 @@ type b with
             !state
 
         |> makeChannelProc source Set.empty
-        
-
-(* overloaded combinators *)
-
-(*
-type b =
-    static member map (conv: 'v -> 'w) (d: set.Change<'v> seq brick) =
-        ()
-*)
-
