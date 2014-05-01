@@ -56,7 +56,6 @@
     <Compile Include="ChainTests.fs" />
     <Compile Include="BricksTests.fs" />
     <Compile Include="BrickSetTests.fs" />
-    <Compile Include="ProgramTests.fs" />
     <Compile Include="TransactionTests.fs" />
     <Compile Include="GCTests.fs" />
     <Compile Include="LifetimeTests.fs" />
