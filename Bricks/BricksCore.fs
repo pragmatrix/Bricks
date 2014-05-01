@@ -222,13 +222,12 @@ type TransactionBuilder() =
 
 let transaction = new TransactionBuilder()
 
+(* PROGRAM *)
+
 type ValueOf<'v>(brick:Brick<'v>) = 
     member this.Brick = brick
 
 let valueOf brick = ValueOf(brick)
-
-
-(* PROGRAM *)
 
 type ProgramM = unit -> Brick list
 
@@ -271,17 +270,6 @@ type ProgramBuilder() =
         fun () ->
             let values = deps |> Seq.map (fun b -> b.evaluate())
             (deps |> Seq.map (fun b -> b :> Brick) |> Seq.toList) @ cont values ()
-
-    // for do! operations that only add some new dependencies
-
-    (*
-    member this.Bind (deps: 'a brick seq, cont: unit -> ProgramM) : ProgramM =
-        this.Bind(deps |> Seq.map (fun b -> b :> Brick), cont)
-
-    member this.Bind (deps: Brick seq, cont: unit -> ProgramM) : ProgramM =
-        fun () ->
-            (deps |> Seq.toList) @ cont () ()
-    *)
 
     member this.Zero () = fun () -> []
     member this.Yield _ = fun () -> []
