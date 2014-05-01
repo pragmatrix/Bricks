@@ -23,17 +23,10 @@ type GCTests() =
             return b * 4
         }
 
-        let p = program {
-            let! c1 = c
-            c1 |> should equal 36
-            apply (transaction { write b 2 })
-            let! c2 = c
-            c2 |> should equal 8
-            let! va1 = valueOf a
-            va1 |> should equal None
-        }
-
-        p.run()
+        c.evaluate() |> should equal 36
+        () |> transaction { write b 2 }
+        c.evaluate() |> should equal 8
+        valueOf a |> should equal None
 
     [<Test>]
     member this.GCInvalidatesOrphanByNotEvaluating() =
@@ -49,17 +42,10 @@ type GCTests() =
                 return 0
            }
 
-        let p = program {
-            let! c1 = c
-            c1 |> should equal 3
-            apply (transaction { write useA false })
-            let! c2 = c
-            c2 |> should equal 0
-            let! va1 = valueOf a
-            va1 |> should equal None
-        }
-
-        p.run()
+        c.evaluate() |> should equal 3
+        () |> transaction { write useA false }
+        c.evaluate() |> should equal 0
+        valueOf a |> should equal None
 
     [<Test>]
     member this.GCDoesNotInvalidateSharedDependency() =
@@ -76,17 +62,10 @@ type GCTests() =
             return b * a
         }
 
-        let p = program {
-            let! c1 = c
-            c1 |> should equal 27
-            apply (transaction { write b 2 } )
-            let! c2 = c
-            c2 |> should equal 6
-            let! va1 = valueOf a
-            va1 |> should equal (Some 3)
-        }
-
-        p.run()
+        c.evaluate() |> should equal 27
+        () |> transaction { write b 2 }
+        c.evaluate() |> should equal 6
+        valueOf a |> should equal (Some 3)
 
     [<Test>]
     member this.NativeGCCollectsTemporarilyUsedBrick() = 
@@ -97,19 +76,15 @@ type GCTests() =
             return a * 3
             }
 
-        let runProgram() = 
+        let run() = 
             let tmp = newTmp()
 
-            use p = program {
-                // be sure a and b are evaluated
-                let! tmp = tmp
-                tmp |> should equal 9
-            }
+            use p = tmp |> toProgram
+            p.run() |> should equal 9
 
-            p.run()
             WeakReference(tmp)
 
-        let weakTemp = runProgram()
+        let weakTemp = run()
 
         // now the program can be collected
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true)
@@ -118,7 +93,6 @@ type GCTests() =
         // be sure a stays in memory.
         // (gc may detect that they are not anymore used before the Weak tests above)
         printf "%A" a
-
 
     [<Test>]
     member this.NativeGCCollectsTemporarilyUsedBrickFromRunBefore() = 
@@ -132,16 +106,16 @@ type GCTests() =
         let runProgram() = 
             let tmps = [| newTmp(0); newTmp(1) |]
             let current = brick { return 0; }
-            use p = program {
+            let b = brick {
                 let! c = current
                 let! tmp = tmps.[c]
                 printf "tmp: %A" tmp
-                tmp |> should equal (3 * c)
+                return tmp
             }
-
-            p.run()
-            p.apply(transaction {write current 1})
-            p.run()
+            use p = toProgram b
+            p.run() |> should equal 0
+            () |> transaction {write current 1}
+            p.run() |> should equal 3
             WeakReference(tmps.[0]), WeakReference(tmps.[1])
 
         let weakTemp, weakTemp2 = runProgram()
@@ -159,32 +133,26 @@ type GCTests() =
     member this.GCCollectedWritesTranscend() =
         let alive = value true
         let a = value 1
-        let latest = ref 0
-        let p = program {
+        let b = brick {
             let! alive = alive
             if (alive) then
                 let! a = a
-                latest := a
+                return Some a
+            else
+                return None
         }
 
-        p.run()
-        !latest |> should equal 1
+        let p = b |> toProgram
 
+        p.run() |> should equal (Some 1)
 
         p.apply (transaction { write a 2 })
-        p.run()
-        !latest |> should equal 2
+        p.run() |> should equal (Some 2)
 
-
-        latest := 0
         p.apply (transaction { write alive false })
-        p.run()
-        !latest |> should equal 0
+        p.run() |> should equal None
 
         p.apply (transaction {write alive true })
-        p.run()
-        !latest |> should equal 2
-
+        p.run() |> should equal (Some 2)
         
-
 

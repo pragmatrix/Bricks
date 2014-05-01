@@ -19,10 +19,9 @@ type 'v brick = BricksCore.Brick<'v>
 type 't bricks = seq<BricksCore.Brick<'t>>
 
 type Transaction = BricksCore.Transaction
-type Program = BricksCore.Program
+type Program<'v> = BricksCore.Program<'v>
 
 let brick = BricksCore.brick
-let program = BricksCore.program
 let transaction = BricksCore.transaction
 
 let inline value v = BricksCore.value v
@@ -30,8 +29,8 @@ let inline convert a b = BricksCore.convert a b
 let inline valueOf b = BricksCore.valueOf b
 let inline manifest f = BricksCore.manifest f       
 
-let inline memo def source = BrickTime.memo def source
-
 type 'v set = 'v BrickDefs.set
 type b = BrickDefs.b
+
+let inline toProgram b = BricksCore.toProgram b
 

@@ -29,16 +29,19 @@ type LifetimeTests() =
 
         let show = value true
 
-        let p = program {
+        let b = brick {
             let! s = show
             if (s) then
                 let! i = i
-                printf "%A" i.Value
+                return Some i
+            else return None
         }
+
+        let p = toProgram b
 
         // initial run
 
-        p.run()
+        p.run() |> ignore
         instance.Value |> should equal 1
         instance.Disposed |> should equal false
 
@@ -46,21 +49,21 @@ type LifetimeTests() =
 
         let changeA = transaction { write a 2 }
         p.apply changeA
-        p.run()
+        p.run() |> ignore
         instance.Value |> should equal 2
 
         // GC collect instance
         let t = transaction { write show false }
 
         p.apply t
-        p.run()
+        p.run() |> ignore
         instance.Disposed |> should equal true
 
         // Reincarnate instance
         instance.Disposed <- false
         let t = transaction { write show true }
         p.apply t
-        p.run()
+        p.run() |> ignore
         instance.Disposed |> should equal false
         instance.Value |> should equal 2
 

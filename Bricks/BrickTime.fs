@@ -7,38 +7,6 @@ open BrickDefs
 open BrickSet
 open BricksCore
 
-(* Memo 
-
-    A memo brick is a brick that is wrapped around another brick and remembers the previous value of it.
-
-    The value of a memo brick is (previousValue, currentValue)
-
-    tbd: kill memo, memo is unstable, because it does not support multiple consumers.
-*)
-
-let memo (def:'v) (source:'v brick) : ('v * 'v) brick =
-
-    fun (b:('v*'v) brick) ->
-        let value = source.evaluate()
-        let prev = 
-            match b.value with
-            | Some (_, v) -> v
-            | None -> def
-        let newValue = (prev, value)
-        [source :> Brick], newValue
-    |> makeBrick
-
-(*
-    A diff brick is a memo brick and a diff function that is applied to output values of the memo.
-
-    tbd: terminology is confusing: we need another name for diffs over time.
-    tbd: diff is basically stable, because memo does not have more than one consumer
-*)
-
-let diff (def: 'v) (differ: 'v -> 'v -> 'd) (source: 'v brick) =
-    let differ = uncurry differ
-    source |> memo def |> convert differ
-
 (* 
     Creates a brick that is able to track changes of a brick value.
 *)

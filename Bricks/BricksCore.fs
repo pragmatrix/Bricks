@@ -224,69 +224,26 @@ let transaction = new TransactionBuilder()
 
 (* PROGRAM *)
 
+(*
+
 type ValueOf<'v>(brick:Brick<'v>) = 
     member this.Brick = brick
 
 let valueOf brick = ValueOf(brick)
+*)
 
-type ProgramM = unit -> Brick list
+let valueOf (brick : Brick<'v>) = if brick.valid then brick.value else None
 
-type Program(_runner : ProgramM) =
-    let mutable _deps : Brick list = []
+type Program<'v>(brick : Brick<'v>) =
 
-    member this.roots = _deps
+    let collect() = (brick :> Brick).tryCollect()
 
     interface IDisposable with
-        member this.Dispose() =
-            _deps |> List.iter (fun d -> d.tryCollect())
+        member i.Dispose() = collect()
             
-    member this.run() =
-        let newDeps = _runner()
-        _deps.Except(newDeps) |> Seq.iter (fun d -> d.tryCollect())
-        _deps <- newDeps
+    member this.run() = brick.evaluate()
 
     member this.apply(t: Transaction) = 
         t()
 
-    member this.evaluate (brick: 'v brick) : 'v = 
-        brick.evaluate()
-
-type ProgramBuilder() =
-
-    (* A regular let! is the isolated evaluation of a root brick in the context of the program *)
-
-    member this.Bind (brick: 'value brick, cont: 'value -> ProgramM) : ProgramM = 
-        fun () ->
-            let value = brick.evaluate()
-            brick :> Brick :: cont value ()
-
-    member this.Bind (vo: ValueOf<'value>, cont: 'value option -> ProgramM) : ProgramM =
-        fun () ->
-            let brick = vo.Brick
-            let v = if brick.valid then vo.Brick.value else None
-            cont v ()
-
-    member this.Bind (deps: 'a brick seq, cont: 'a seq -> ProgramM) : ProgramM =
-        fun () ->
-            let values = deps |> Seq.map (fun b -> b.evaluate())
-            (deps |> Seq.map (fun b -> b :> Brick) |> Seq.toList) @ cont values ()
-
-    member this.Zero () = fun () -> []
-    member this.Yield _ = fun () -> []
-    member this.Return _ = fun () -> []
-
-    member this.Run p = new Program(p)
-
-    member this.For(seq : ProgramM, cont: unit -> ProgramM) : ProgramM =
-        fun () ->
-            let deps = seq ()
-            deps @ cont() ()
-
-    [<CustomOperation("apply")>]
-    member this.Apply(nested : ProgramM, transaction: Transaction) = 
-        fun () ->
-            let deps = nested ()
-            transaction()
-            deps
-
-let program = new ProgramBuilder()
+let toProgram b = new Program<_>(b)

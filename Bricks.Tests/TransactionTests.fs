@@ -22,15 +22,9 @@ type TransactionTests() =
             write a 4
         }
         
-        let p = program {
-            let! v = c
-            v |> should equal 15
-            apply t
-            let! v = c
-            v |> should equal 20
-        }
-
-        p.run()
+        c.evaluate() |> should equal 15
+        t()
+        c.evaluate() |> should equal 20
 
     [<Test>]
     member this.continuationGetsInvalidated() = 
@@ -45,17 +39,10 @@ type TransactionTests() =
         let t = transaction {
             write b 5
         }
-        
-        let p = program {
-            let! v = c
-            v |> should equal 12
-            apply t
-            let! v = c
-            v |> should equal 15
-        }
 
-        p.run()
-
+        c.evaluate() |> should equal 12
+        t()
+        c.evaluate() |> should equal 15
 
     [<Test>]
     member this.lastWriteWins() =
@@ -69,18 +56,10 @@ type TransactionTests() =
             write a 3
             write a 4
         }
-        
-        let p = program {
-            let! v = c
-            printf "%d\n" v
-            v |> should equal 15
-            apply t
-            let! v = c
-            printf "%d\n" v
-            v |> should equal 20
-        }
-        
-        p.run()
+
+        c.evaluate() |> should equal 15
+        t()
+        c.evaluate() |> should equal 20
 
     [<Test>]
     member this.transactionReset() =
@@ -97,23 +76,13 @@ type TransactionTests() =
         let rt = transaction {
             reset a
         }
+  
+        c.evaluate() |> should equal 15
+        t()
+        c.evaluate() |> should equal 20
+        rt()
+        c.evaluate() |> should equal 15
         
-        let p = program {
-            let! v = c
-            printf "%d\n" v
-            v |> should equal 15
-            apply t
-            let! v = c
-            printf "%d\n" v
-            v |> should equal 20
-            apply rt
-            let! v = c
-            printf "%d\n" v
-            v |> should equal 15
-        }
-
-        p.run()
-
     [<Test>]
     member this.aWriteCanNotBeInvalidated() =
         let a = brick { return 3 }
@@ -121,20 +90,8 @@ type TransactionTests() =
             let! a = a 
             return a * 2}
 
-        let p = program {
-            let! v = b
-            printf "%d\n" v
-            v |> should equal 6
-            apply (transaction { write b 4 })
-            let! v = b
-            printf "%d\n" v
-            v |> should equal 4
-            apply (transaction { write a 0 })
-            let! v = b
-            printf "%d\n" v
-            v |> should equal 4
-        }
-
-        p.run()
-
-
+        b.evaluate() |> should equal 6
+        (transaction { write b 4 })()
+        b.evaluate() |> should equal 4
+        (transaction { write a 0 })()
+        b.evaluate() |> should equal 4
