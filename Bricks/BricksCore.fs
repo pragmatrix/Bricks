@@ -3,7 +3,7 @@
 (** BRICKS, F# COMPUTATION EXPRESSIONS AND COMBINATORS FOR LAZY INCREMENTAL COMPUTATION, SEE README.MD **)
 
 open BrickDefs
-open BrickSet
+open BrickCollections
 
 open System
 open System.Diagnostics

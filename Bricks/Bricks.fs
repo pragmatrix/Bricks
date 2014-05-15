@@ -1,6 +1,7 @@
 ﻿module Bricks
 
 open BrickDefs
+open BrickChannel
 open System.Collections.Immutable
 
 type HashMap = BrickDefs.HashMap
@@ -10,10 +11,10 @@ type ImmutableDictionary<'k, 'v> with
     member inline this.has k = BrickDefs.Map.has this k
 
 module Set =
-    let inline ofSeq s = BrickSet.Set.ofSeq s
-    let inline diff s1 s2 = BrickSet.Set.diff s1 s2
-    let inline Added v = BrickSet.Set.Added v
-    let inline Removed v = BrickSet.Set.Removed v
+    let inline ofSeq s = BrickCollections.Set.ofSeq s
+    let inline diff s1 s2 = BrickCollections.Set.diff s1 s2
+    let inline Added v = BrickCollections.Set.Added v
+    let inline Removed v = BrickCollections.Set.Removed v
 
 type 'v brick = BricksCore.Brick<'v>
 type 't bricks = seq<BricksCore.Brick<'t>>
@@ -33,4 +34,15 @@ type 'v set = 'v BrickDefs.set
 type b = BrickDefs.b
 
 let inline toProgram b = BricksCore.toProgram b
+
+// Channel
+
+type 'e channel = 'e BrickChannel.channel
+module Channel = 
+    let inline make f = Channel.make f
+    /// Create an initially empty channel source
+    let inline source<'e>() = Channel.source<'e>()
+
+
+
 

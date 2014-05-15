@@ -14,6 +14,7 @@
     <Name>Bricks</Name>
     <SolutionDir Condition="$(SolutionDir) == '' Or $(SolutionDir) == '*Undefined*'">..\</SolutionDir>
     <RestorePackages>true</RestorePackages>
+    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -55,8 +56,9 @@
   <ItemGroup>
     <Compile Include="Chain.fs" />
     <Compile Include="BrickDefs.fs" />
-    <Compile Include="BrickSet.fs" />
+    <Compile Include="BrickCollections.fs" />
     <Compile Include="BricksCore.fs" />
+    <Compile Include="BrickChannel.fs" />
     <Compile Include="BrickTime.fs" />
     <Compile Include="Bricks.fs" />
     <None Include="packages.config" />
@@ -68,7 +70,7 @@
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Collections.Immutable">
-      <HintPath>..\..\packages\Microsoft.Bcl.Immutable.1.0.30\lib\portable-net45+win8+wp8\System.Collections.Immutable.dll</HintPath>
+      <HintPath>..\..\packages\Microsoft.Bcl.Immutable.1.0.34\lib\portable-net45+win8+wp8+wpa81\System.Collections.Immutable.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="System.ComponentModel.Composition" />
