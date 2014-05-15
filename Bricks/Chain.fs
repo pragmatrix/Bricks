@@ -13,16 +13,16 @@ let private isSame a b = obj.ReferenceEquals(a, b)
 type Chain = interface
     end
 
-type Chain<'a> = { mutable next: ('a * Chain<'a>) option }
+type Chain<'e> = { mutable next: ('e * Chain<'e>) option }
     with
         // the canonical IEnumerable is returning all values until the end of the chain
-        interface IEnumerable<'a> 
+        interface IEnumerable<'e> 
             with 
-                member this.GetEnumerator() : IEnumerator<'a> =
+                member this.GetEnumerator() : IEnumerator<'e> =
                     let gen = this.links() |> Seq.map fst
                     gen.GetEnumerator()
                 member this.GetEnumerator() : IEnumerator =
-                    (this :> IEnumerable<'a>).GetEnumerator() :> IEnumerator
+                    (this :> IEnumerable<'e>).GetEnumerator() :> IEnumerator
 
         interface Chain
 
@@ -41,6 +41,12 @@ type Chain<'a> = { mutable next: ('a * Chain<'a>) option }
             let newEnd = Chain.empty()
             this.next <- Some (value, newEnd)
             newEnd
+
+        /// Adds a sequence of elements and returns the new end of the chain
+        // tbd: optimize away all the temporary Chain.empty()s:
+
+        member this.pushSeq values = 
+            values |> (Seq.fold (fun (c : Chain<'e>) v -> c.push v)) this
 
         // returns all the values and the end link
         member this.consumeAll() = 

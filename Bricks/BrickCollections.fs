@@ -7,11 +7,9 @@ module Set =
     let empty<'e> = HashSet<'e>.Empty
     let ofSeq = HashSet.CreateRange
 
-    type 'v change =
-        | Added of 'v
-        | Removed of 'v
-
-    type 'v changes = 'v change seq
+    type 'e change =
+        | Added of 'e
+        | Removed of 'e
 
     let diff (s1: 'e set) (s2 : 'e set) = 
         let added = 
@@ -32,6 +30,6 @@ module List =
     let empty<'e> = ImmutableList<'e>.Empty
     let ofSeq = ImmutableList.CreateRange
 
-    type 'v change = 
-        | Inserted of int * 'v
+    type 'e change = 
+        | Inserted of int * 'e
         | Removed of int

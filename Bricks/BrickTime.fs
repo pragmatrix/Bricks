@@ -9,14 +9,16 @@ open BricksCore
 open BrickChannel
 
 type b with
-    static member track (source: 'v set brick) : 'v Set.changes channel =
+    // set
+
+    static member track (source: 'v set brick) : 'v Set.change channel =
         Channel.track Set.empty Set.diff source
 
-    static member map (mapper: 's brick -> 't) (source: 's brick Set.changes channel) : 't Set.changes channel =
+    static member map (mapper: 's -> 't) (source: 's Set.change channel) : 't Set.change channel =
 
-        let state = ref Map.empty<'s brick, 't>
+        let state = ref Map.empty<'s, 't>
 
-        let processor (change : 's brick Set.change) = 
+        let processor (change : 's Set.change) = 
             let this = !state
             match change with
             | Set.Added e -> 
@@ -28,11 +30,11 @@ type b with
                 state := this.Remove e
                 Set.Removed t
 
-        fun (chain : 't Set.changes chain) changes ->
-            changes |> Seq.flatten |> Seq.map processor |> chain.push
+        fun (chain : 't Set.change chain) changes ->
+            changes |> Seq.map processor |> chain.pushSeq
 
         |> Channel.makeProc source (Chain.empty())
-                   
+     
     static member materialize source =
 
         let state = ref Set.empty
@@ -44,7 +46,26 @@ type b with
             | Set.Removed e -> state := this.Remove e
 
         fun _ changes ->
-            changes |> Seq.flatten |> Seq.iter processor
+            changes |> Seq.iter processor
             !state
 
         |> Channel.makeProc source Set.empty
+
+    // list
+
+    (*
+
+    static member map (mapper: 's -> 't) (source: 's List.change channel) : 't List.change channel =
+        let processor (change : 's List.change) =
+            match change with
+            | List.Inserted (i, e) ->
+                List.Inserted(i, mapper e)
+            | List.Removed i ->
+                List.Removed i
+
+        fun (chain : 't List.change chain) change ->
+            change |> processor |> chain.push
+
+        |> Channel.makeProc source (Chain.empty())
+    *)
+

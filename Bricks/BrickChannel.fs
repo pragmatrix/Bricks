@@ -33,7 +33,7 @@ module Channel =
         c.write (v.push element)
 
     // Create a channel by applying a diff function to a brick
-    let track (initial: 'v) (tracker: 'v -> 'v -> 'r) (source: 'v brick) : 'r channel =
+    let track (initial: 'v) (tracker: 'v -> 'v -> 'r seq) (source: 'v brick) : 'r channel =
 
         let current = ref initial
 
@@ -42,5 +42,5 @@ module Channel =
             let value = source.evaluate()
             let res = tracker !current value
             current := value
-            [source :> Brick], chain.push res
+            [source :> Brick], chain.pushSeq res
         |> make
