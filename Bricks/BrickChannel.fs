@@ -12,7 +12,7 @@ module Channel =
 
     type Processor<'s, 't> = 't -> 's seq -> 't
 
-    let makeProc (source : 's channel) (initial: 't) (f : Processor<'s, 't>) = 
+    let makeProcSeq (source : 's channel) (initial: 't) (f : Processor<'s, 't>) = 
         let deps = [source :>Brick]
         let sourceHead = ref source.value.Value
         fun (this: 't brick) ->

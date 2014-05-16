@@ -115,7 +115,7 @@ type BrickBuilder() =
         fun b ->
             let depValues = dependencies |> Seq.map (fun d -> d.evaluate())
             let contDep, contValue = cont depValues b
-            let thisDeps = dependencies |> Seq.map (fun d -> d :> Brick) |> Seq.toList
+            let thisDeps = dependencies |> Seq.cast |> Seq.toList
             thisDeps @ contDep |> Seq.toList, contValue
 
     member this.Bind (manifest: Manifest<'i>, cont: 'i -> Computation<'i>) : Computation<'i> =
