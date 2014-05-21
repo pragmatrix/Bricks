@@ -44,3 +44,6 @@ module Channel =
             current := value
             [source :> Brick], chain.pushSeq res
         |> make
+
+[<assembly:AutoOpen("BrickChannel")>]
+do ()

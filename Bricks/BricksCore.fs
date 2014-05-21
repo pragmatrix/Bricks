@@ -3,13 +3,14 @@
 (** BRICKS, F# COMPUTATION EXPRESSIONS AND COMBINATORS FOR LAZY INCREMENTAL COMPUTATION, SEE README.MD **)
 
 open BrickDefs
-open BrickCollections
 
 open System
 open System.Diagnostics
 open System.Collections.Immutable
 open System.Collections.Generic
 open System.Linq
+
+open InlineHelper
 
 (** BRICK, ENVIRONMENT **)
 
@@ -26,21 +27,22 @@ module BrickExtensions =
             this.removeReferrer referrer
             this.tryCollect()
 
-type Trace = Brick list
+type internal Trace = Brick list
 
-type ComputationResult<'v> = Trace * 'v
+type internal ComputationResult<'v> = Trace * 'v
 
-type Computation<'v> = 'v brick -> ComputationResult<'v>
+type internal Computation<'v> = 'v brick -> ComputationResult<'v>
 
 and 't brick = Brick<'t>
 
 and Brick<'v>(computation : Computation<'v>, ?initial: 'v) =
+    
     let mutable _comp = computation
     let mutable _trace : Trace = []
     let mutable _value : 'v option = initial
     let mutable _alive = false
     let mutable _valid = false
-    let mutable _referrer = Set.empty
+    let mutable _referrer = ISet.empty
 
     member internal this.trace = _trace
     member internal this.valid = _valid
@@ -93,16 +95,16 @@ and Brick<'v>(computation : Computation<'v>, ?initial: 'v) =
     member this.invalidate() =
         (this :> Brick).invalidate()    
 
-type 't bricks = seq<Brick<'t>>
+type 't bricks = seq<'t brick>
 
-let makeBrick<'v> f = Brick<'v>(f)
-let makeBrickInit<'v> initial f = Brick<'v>(f, initial)
+let internal makeBrick<'v> f = Brick<'v>(f)
+let internal makeBrickInit<'v> initial f = Brick<'v>(f, initial)
 
-type Manifest<'a> = { instantiator: unit -> 'a }
+type ManifestMarker<'a> = { instantiator: unit -> 'a }
     with 
         static member create f = { instantiator = f }
 
-let inline manifest f = Manifest<_>.create f
+let inline manifest f = ManifestMarker<_>.create f
 
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
@@ -118,7 +120,7 @@ type BrickBuilder() =
             let thisDeps = dependencies |> Seq.cast |> Seq.toList
             thisDeps @ contDep |> Seq.toList, contValue
 
-    member this.Bind (manifest: Manifest<'i>, cont: 'i -> Computation<'i>) : Computation<'i> =
+    member this.Bind (manifest: ManifestMarker<'i>, cont: 'i -> Computation<'i>) : Computation<'i> =
         fun b ->
             let i = 
                 match b.instance with
@@ -136,41 +138,7 @@ type BrickBuilder() =
 
     member this.Run comp = makeBrick comp
 
-
 let brick = new BrickBuilder()
-
-
-(** BASIC COMBINATORS **)
-
-(*
-    Value brick.
-*)
-
-let value (v : 'v) : 'v brick =
-    brick {
-        return v
-    }
-
-(*
-    A conversion brick applies a function to a brick.
-*)
-
-let convert (c: 's -> 't) (source: 's brick) : 't brick =
-    brick {
-        let! s = source
-        return c s
-    }
-
-(*
-    combine two bricks by a funcion.
-*)
-
-let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
-    brick {
-        let! a = a
-        let! b = b
-        return c a b
-    }
 
 (* Transaction
 
@@ -183,11 +151,11 @@ let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
 
 // tbd: we could just chain functions here, so TransactionState could be unit -> unit
 
-type Write = unit -> unit
-
 type Transaction = unit -> unit
-type TransactionState = Write list
-type TransactionM = TransactionState -> TransactionState
+
+type private Write = unit -> unit
+type private TransactionState = Write list
+type private TransactionM = TransactionState -> TransactionState
 
 type TransactionBuilder() =
     member this.Bind (brick: 'value brick, cont: 'value -> TransactionM) : TransactionM = 
@@ -220,19 +188,7 @@ type TransactionBuilder() =
             let state = nested t
             (fun () -> brick.reset()) :: state
 
-let transaction = new TransactionBuilder()
-
 (* PROGRAM *)
-
-(*
-
-type ValueOf<'v>(brick:Brick<'v>) = 
-    member this.Brick = brick
-
-let valueOf brick = ValueOf(brick)
-*)
-
-let valueOf (brick : Brick<'v>) = if brick.valid then brick.value else None
 
 type Program<'v>(brick : Brick<'v>) =
 
@@ -246,4 +202,65 @@ type Program<'v>(brick : Brick<'v>) =
     member this.apply(t: Transaction) = 
         t()
 
+type 'v program = Program<'v>
+
+(** BASIC COMBINATORS **)
+
+/// Value brick (tbd: remove in favor of lift?).
+
+let value (v : 'v) : 'v brick =
+    brick {
+        return v
+    }
+
+/// A conversion brick applies a function to a brick.
+
+let convert (c: 's -> 't) (source: 's brick) : 't brick =
+    brick {
+        let! s = source
+        return c s
+    }
+
+/// combine two bricks by a funcion.
+
+let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
+    brick {
+        let! a = a
+        let! b = b
+        return c a b
+    }
+
+/// lift
+
+type Lifter = Lifter with
+   
+    static member instance (_:Lifter, v:'v, _:'v brick) : unit -> 'v brick = fun () -> value v
+    static member instance (_:Lifter, f: 's -> 't, _:'s brick -> 't brick) = fun () -> convert f
+    static member instance (_:Lifter, f: 's -> 'e -> 's, _:'s brick -> 'e brick -> 's brick) =
+        fun () ->
+            fun (s: 's brick) (e: 'e brick) ->
+                brick {
+                    let! s = s
+                    let! e = e
+                    return f s e
+                }
+
+let inline lift f = Inline.instance(Lifter,f) ()
+
+// tbd: do we need this anymore?
+
+let liftFolder (f: ('s * 'e) -> 's) =
+    fun (s: 's brick, e: 'e brick) ->
+        brick {
+            let! s = s
+            let! e = e
+            return f(s,e)
+        }
+
+let transaction = new TransactionBuilder()
+
+let valueOf (brick : Brick<'v>) = if brick.valid then brick.value else None
 let toProgram b = new Program<_>(b)
+
+[<assembly:AutoOpen("BricksCore")>]
+do ()
