@@ -80,6 +80,7 @@ type Materializer = Materializer with
     static member instance (Materializer, c: 'e ISet.change channel, _:ImmutableHashSet<'e> brick) = fun () -> materializeSet c
     static member instance (Materializer, c: 'e IList.change channel, _:'e ilist brick) = fun () -> materializeList c
 
+let inline materialize source = Inline.instance(Materializer, source)()
 
 type Mapper = Mapper with
 
@@ -118,12 +119,14 @@ type Folder = Folder with
 type Scanner = Scanner with
     static member instance (Scanner, l: 'e ilist brick, f: 's -> 'e -> 's, _:'s ilist brick) = 
         fun s -> scanList f s l
+    static member instance (Scanner, l: 'e IList.change channel, f: 's -> 'e -> 's, _:'s ilist brick) =
+        fun s -> l |> materialize |> scanList f s
 
 module Published =
     let inline track source = track source
     let inline map f source = Inline.instance(Mapper, source) f
     let inline map2 f a b = Inline.instance(Mapper2, a, b) f
-    let inline materialize source = Inline.instance(Materializer, source)()
+    let inline materialize source = materialize source
     let inline fold f s source = Inline.instance(Folder, source, f) s
     let inline scan f s source = Inline.instance(Scanner, source, f) s
 
