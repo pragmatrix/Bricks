@@ -3,7 +3,7 @@
 module BrickTime
 
 open Chain
-open BrickDefs
+open BrickCollections
 open BricksCore
 open BrickChannel
 open InlineHelper
@@ -13,50 +13,69 @@ open System.Collections.Immutable
 let track (source: 'v iset brick) : 'v ISet.change channel =
     Channel.track ISet.empty ISet.diff source
 
-let private mapc (mapper: 's -> 't) (source: 's channel) : 't channel = 
-    fun (chain : 't chain) elements ->
-        elements |> Seq.map mapper |> chain.pushSeq
-    |> Channel.makeProcSeq source (Chain.empty())
+let private mapList f channel = 
 
-let private mapList f l = 
-    let cmapper (change : 's IList.change) =
-        match change with
-        | IList.Inserted (i, e) -> IList.Inserted(i, f e)
-        | IList.Removed i -> IList.Removed i
+    let state = ref IList.empty
 
-    mapc cmapper l
-
-let private materializeSet collection = 
-    let state = ref ISet.empty
+    let f' (change, _) =
+        let mChange =
+            match change with
+            | IList.Inserted (i, e) -> IList.Inserted(i, f e)
+            | IList.Removed i -> IList.Removed i
+            | IList.Reset v -> IList.map f v |> IList.Reset
         
-    let processor change =
-        let this = !state
-        match change with
-        | ISet.Added e -> state := this.Add e
-        | ISet.Removed e -> state := this.Remove e
+        state := IList.apply mChange !state
+        mChange, !state
 
-    fun _ changes ->
-        changes |> Seq.iter processor
-        !state
+    Channel.map f' channel
 
-    |> Channel.makeProcSeq collection !state
+let private mapSet f channel = 
 
-let private mapSet f s = 
     let state = ref IMap.empty<'s, 't>
+    let v' = ref ISet.empty
 
-    let cmapper (change : 's ISet.change) = 
-        let this = !state
+    let f' (change, _) = 
         match change with
-        | ISet.Added e -> 
-            let t = f e
-            state := this.Add(e, t)
-            ISet.Added t
-        | ISet.Removed e ->
-            let t = this.[e]
-            state := this.Remove e
-            ISet.Removed t
+        | ISet.Added e ->
+            let e' = f e
+            state := (!state).Add(e, e')
+            v' := (!v').Add(e')
+            ISet.Added e', !v'
 
-    mapc cmapper s
+        | ISet.Removed e ->
+            let state' = !state
+            let e' = state'.[e]
+            v' := (!v').Remove (state'.[e])
+            state := state'.Remove e
+            ISet.Removed e', !v'
+
+        | ISet.Reset v ->
+            state := v |> Seq.map (fun e -> (e, f e)) |> IMap.ofSeq
+            v' := (!state).Values |> ISet.ofSeq
+            let v'' = !v'
+            ISet.Reset v'', v''
+
+    Channel.map f' channel
+
+let private materializeList c = 
+    let back = Channel.back c
+    brick {
+        let! back' = back
+        match back' with
+        | None -> return IList.empty
+        | Some (_, v) -> return v
+    }
+
+let private materializeSet c =
+    let back = Channel.back c
+    brick {
+        let! back' = back
+        match back' with
+        | None -> return ISet.empty
+        | Some (_, v) -> return v
+    }
+
+(*
 
 let private materializeList c = 
         let state = ref IList.empty
@@ -73,11 +92,11 @@ let private materializeList c =
 
         |> Channel.makeProcSeq c !state
 
-
+*)
 
 type Materializer = Materializer with
 
-    static member instance (Materializer, c: 'e ISet.change channel, _:ImmutableHashSet<'e> brick) = fun () -> materializeSet c
+    static member instance (Materializer, c: 'e ISet.change channel, _:'e iset brick) = fun () -> materializeSet c
     static member instance (Materializer, c: 'e IList.change channel, _:'e ilist brick) = fun () -> materializeList c
 
 let inline materialize source = Inline.instance(Materializer, source)()
@@ -89,7 +108,7 @@ type Mapper = Mapper with
     static member instance (Mapper, l: 'e list, _:'e2 list) = fun f -> List.map f l : 'e2 list
     static member instance (Mapper, s: 'e seq, _:'e2 seq) = fun f -> Seq.map f s : 'e2 seq
 
-let private mapList2 (f: 'a -> 'b -> 'r) (a : 'a ilist brick) (b : 'b ilist brick) = 
+let private map2List (f: 'a -> 'b -> 'r) (a : 'a ilist brick) (b : 'b ilist brick) = 
     brick {
         let! a = a
         let! b = b
@@ -98,7 +117,7 @@ let private mapList2 (f: 'a -> 'b -> 'r) (a : 'a ilist brick) (b : 'b ilist bric
 
 type Mapper2 = Mapper2 with
     static member instance (Mapper2, a: 'a ilist brick, b: 'b ilist brick, _: 'r ilist brick) =
-        fun f -> mapList2 f a b
+        fun (f: 'a -> 'b -> 'r) -> map2List f a b
 
 let private foldList (f: 's -> 'e -> 's) (s: 's) (l : 'e ilist brick) : 's brick = 
     brick {
@@ -126,6 +145,7 @@ module Published =
     let inline track source = track source
     let inline map f source = Inline.instance(Mapper, source) f
     let inline map2 f a b = Inline.instance(Mapper2, a, b) f
+    let inline zip a b = Inline.instance(Mapper2, a, b) (fun a b -> (a,b))
     let inline materialize source = materialize source
     let inline fold f s source = Inline.instance(Folder, source, f) s
     let inline scan f s source = Inline.instance(Scanner, source, f) s

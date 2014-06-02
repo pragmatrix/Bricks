@@ -14,12 +14,12 @@ type BrickSetTests() =
         let s1 = ISet.ofSeq []
         let s2 = ISet.ofSeq [v1]
         let d = ISet.diff s1 s2
-        d |> should equal [ISet.Added v1]
+        d |> Seq.map fst |> should equal [ISet.Added v1]
 
         let v2 = new obj()
         let s3 = ISet.ofSeq [v1; v2]
         let d = ISet.diff s2 s3
-        d |> should equal [ISet.Added v2]
+        d |> Seq.map fst |> should equal [ISet.Added v2]
 
     [<Test>]
     member this.testSetDiffRemove() = 
@@ -29,11 +29,11 @@ type BrickSetTests() =
         let s1 = ISet.ofSeq [v1; v2]
         let s2 = ISet.ofSeq [v2]
         let d = ISet.diff s1 s2
-        d |> should equal [ISet.Removed v1]
+        d |> Seq.map fst |> should equal [ISet.Removed v1]
 
         let s3 = ISet.ofSeq []
         let d = ISet.diff s2 s3
-        d |> should equal [ISet.Removed v2]
+        d |> Seq.map fst |> should equal [ISet.Removed v2]
 
     [<Test>]
     member this.setSetDiffAddRemove() =
@@ -44,7 +44,7 @@ type BrickSetTests() =
         let s1 = ISet.ofSeq [v1; v2]
         let s2 = ISet.ofSeq [v1; v3]
         let d = ISet.diff s1 s2
-        d |> should equal [ISet.Removed v2; ISet.Added v3]
+        d |> Seq.map fst |> should equal [ISet.Removed v2; ISet.Added v3]
 
          
     [<Test>]

@@ -1,6 +1,5 @@
 ﻿module BrickChannel
 
-open BrickDefs
 open BricksCore
 
 open Chain
@@ -37,13 +36,31 @@ module Channel =
 
         let current = ref initial
 
-        fun (this: 'r chain brick) ->
+        fun (this: 'r channel) ->
             let chain = this.value.Value
             let value = source.evaluate()
             let res = tracker !current value
             current := value
             [source :> Brick], chain.pushSeq res
         |> make
+
+    let map (mapper: 's -> 't) (source: 's channel) : 't channel = 
+        fun (chain : 't chain) elements ->
+            elements |> Seq.map mapper |> chain.pushSeq
+        |> makeProcSeq source (Chain.empty())
+
+
+    let back (channel: 's channel) : 's option brick =
+        let chain = ref (channel.value.Value)
+
+        brick {
+            let! _ = channel // < dependency only
+            let chain' = (!chain).back
+            chain := chain'
+            match chain'.atEnd with
+            | true -> return None
+            | false -> return Some chain'.value
+        }
 
 [<assembly:AutoOpen("BrickChannel")>]
 do ()

@@ -2,14 +2,13 @@
 
 (** BRICKS, F# COMPUTATION EXPRESSIONS AND COMBINATORS FOR LAZY INCREMENTAL COMPUTATION, SEE README.MD **)
 
-open BrickDefs
-
 open System
 open System.Diagnostics
 open System.Collections.Immutable
 open System.Collections.Generic
 open System.Linq
 
+open BrickCollections
 open InlineHelper
 
 (** BRICK, ENVIRONMENT **)

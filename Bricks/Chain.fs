@@ -34,6 +34,13 @@ type Chain<'e> = { mutable next: ('e * Chain<'e>) option }
             | None -> failwith "chain.value: no value"
             | Some (v, _) -> v
 
+        // the back of this chain or atEnd
+        member this.back = 
+            match this.next with
+            | None -> this
+            | Some (_, { next = None} ) -> this
+            | Some (_, next) -> next.back
+
         // Adds a value and returns the new end of the chain.
         member this.push value =
             if (not this.atEnd) then

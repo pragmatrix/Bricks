@@ -1,4 +1,4 @@
-﻿module BrickDefs
+﻿module BrickCollections
 
 open System.Collections.Immutable
 open System.Collections.Generic
@@ -11,8 +11,8 @@ module Seq =
     let flatten l = Seq.collect id l
 
 // The collection from System.Collections.Immutable are used to get rid
-// of the F# comparison constrained and do comparison based on references if not
-// overridden by Equals()
+// of the F# comparison constrained and do comparisons based on references if not
+// overridden by Equals() ... well, and I also suspect that they are faster. 
 
 module ISet = 
     type ImmutableHashSet<'v> with
@@ -22,9 +22,22 @@ module ISet =
     let empty<'e> = ImmutableHashSet<'e>.Empty
     let ofSeq = ImmutableHashSet.CreateRange
 
-    type 'e change =
+    type 'e isetchange =
         | Added of 'e
         | Removed of 'e
+        | Reset of 'e iset
+
+    type 'e change = 'e isetchange * 'e iset
+
+    let apply change (value : 'e iset) = 
+        match change with
+        | Added e -> value.Add e
+        | Removed e -> value.Remove e
+        | Reset v -> v
+
+    let materialize initial changes = 
+        let apply (_, v) c = c, apply c v
+        Seq.scan apply (Reset initial, initial) changes |> Seq.skip 1
 
     let diff (s1: 'e iset) (s2 : 'e iset) = 
         let added = 
@@ -37,7 +50,9 @@ module ISet =
             |> Seq.filter (s2.has >> not)
             |> Seq.map Removed
 
-        [removed; added] |> Seq.flatten
+        [removed; added] |> Seq.flatten |> materialize s1
+
+    let inline map f = Seq.map f >> ofSeq
 
 type 'e iset = 'e ISet.iset
 
@@ -47,9 +62,24 @@ module IList =
     let empty<'e> = ImmutableList<'e>.Empty
     let ofSeq = ImmutableList.CreateRange
 
-    type 'e change = 
+    type 'e ilistchange = 
         | Inserted of int * 'e
         | Removed of int
+        | Reset of 'e ilist
+
+    type 'e change = 'e ilistchange * 'e ilist
+
+    let apply change (value : 'e ilist) = 
+        match change with
+        | Inserted (i, e) -> value.Insert(i, e)
+        | Removed i -> value.RemoveAt(i)
+        | Reset v -> v
+
+    let materialize initial changes = 
+        let apply (_, v) c = c, apply c v
+        Seq.scan apply (Reset initial, initial) changes |> Seq.skip 1
+
+    let inline map f = Seq.map f >> ofSeq
 
 type 'e ilist = 'e IList.ilist
 
@@ -60,7 +90,10 @@ module IMap =
     let get (m:IMap<'k, 'v>) k = 
         let has, v = m.TryGetValue k
         if has then Some v else None
+
     let has (m:IMap<'k, 'v>) k = m.ContainsKey k
+
+    let ofSeq s = ImmutableDictionary.CreateRange(Seq.map (fun (k, v) -> KeyValuePair(k, v)) s)
 
 type IMap<'k, 'v> = IMap.IMap<'k, 'v>
 
@@ -69,8 +102,7 @@ type ImmutableDictionary<'k, 'v> with
     member this.has k = IMap.has this k
 
 type ImmutableDictionary with
-    static member fromSeq seq = 
-        ImmutableDictionary.CreateRange(Seq.map (fun (k, v) -> KeyValuePair(k, v)) seq)
+    static member ofSeq s = IMap.ofSeq s
 
 let inline curry f a b = f (a, b)
 let inline uncurry f (a, b) = f a b
@@ -78,6 +110,6 @@ let inline private (|?) (a: 'a option) b = if a.IsSome then a.Value else b
 
 let inline isSame a b = obj.ReferenceEquals(a, b)
 
-[<assembly:AutoOpen("BrickDefs")>]
+[<assembly:AutoOpen("BrickCollections")>]
 do ()
 

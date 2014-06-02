@@ -55,12 +55,13 @@
   <Import Project="$(SolutionDir)\.nuget\NuGet.targets" Condition="Exists('$(SolutionDir)\.nuget\NuGet.targets')" />
   <ItemGroup>
     <Compile Include="Chain.fs" />
-    <Compile Include="BrickDefs.fs" />
+    <Compile Include="BrickCollections.fs" />
     <Compile Include="InlineHelper.fs" />
     <Compile Include="BricksCore.fs" />
     <Compile Include="BrickChannel.fs" />
     <Compile Include="BrickTime.fs" />
     <Compile Include="Bricks.fs" />
+    <Compile Include="BrickCursor.fs" />
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
