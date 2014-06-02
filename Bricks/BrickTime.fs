@@ -75,25 +75,6 @@ let private materializeSet c =
         | Some (_, v) -> return v
     }
 
-(*
-
-let private materializeList c = 
-        let state = ref IList.empty
-
-        let processor change = 
-            let this = !state
-            match change with
-            | IList.Inserted (i, e) -> state := this.Insert(i, e)
-            | IList.Removed i -> state := this.RemoveAt i
-
-        fun _ changes ->
-            changes |> Seq.iter processor
-            !state
-
-        |> Channel.makeProcSeq c !state
-
-*)
-
 type Materializer = Materializer with
 
     static member instance (Materializer, c: 'e ISet.change channel, _:'e iset brick) = fun () -> materializeSet c
