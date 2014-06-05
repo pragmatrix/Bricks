@@ -11,13 +11,13 @@ open InlineHelper
 open System.Collections.Immutable
 
 let track (source: 'v iset brick) : 'v ISet.change channel =
-    Channel.track ISet.empty ISet.diff source
+    Channel.track ISet.reset ISet.diff source
 
 let private mapList f channel = 
 
     let state = ref IList.empty
 
-    let f' (change, _) =
+    let map (change, _) =
         let mChange =
             match change with
             | IList.Inserted (i, e) -> IList.Inserted(i, f e)
@@ -27,14 +27,16 @@ let private mapList f channel =
         state := IList.apply mChange !state
         mChange, !state
 
-    Channel.map f' channel
+    let reset (_, v) = map (IList.Reset v, v)
+
+    Channel.map reset map channel
 
 let private mapSet f channel = 
 
     let state = ref IMap.empty<'s, 't>
-    let v' = ref ISet.empty
+    let v' = ref ISet.empty<'t>
 
-    let f' (change, _) = 
+    let map (change, _) = 
         match change with
         | ISet.Added e ->
             let e' = f e
@@ -55,30 +57,21 @@ let private mapSet f channel =
             let v'' = !v'
             ISet.Reset v'', v''
 
-    Channel.map f' channel
+    let reset (_, v) = map (ISet.Reset v, v)
 
-let private materializeList c = 
-    let back = Channel.back c
-    brick {
-        let! back' = back
-        match back' with
-        | None -> return IList.empty
-        | Some (_, v) -> return v
-    }
+    Channel.map reset map channel 
 
-let private materializeSet c =
-    let back = Channel.back c
+let private materializeCollection (c : ('d * 'v) channel) = 
     brick {
-        let! back' = back
-        match back' with
-        | None -> return ISet.empty
-        | Some (_, v) -> return v
+        let! chain = c
+        let (_, value) = chain.value
+        return value
     }
 
 type Materializer = Materializer with
 
-    static member instance (Materializer, c: 'e ISet.change channel, _:'e iset brick) = fun () -> materializeSet c
-    static member instance (Materializer, c: 'e IList.change channel, _:'e ilist brick) = fun () -> materializeList c
+    static member instance (Materializer, c: 'e ISet.change channel, _:'e iset brick) = fun () -> materializeCollection c
+    static member instance (Materializer, c: 'e IList.change channel, _:'e ilist brick) = fun () -> materializeCollection c
 
 let inline materialize source = Inline.instance(Materializer, source)()
 
@@ -106,7 +99,7 @@ let private foldList (f: 's -> 'e -> 's) (s: 's) (l : 'e ilist brick) : 's brick
         return Seq.fold f s l
     }
 
-let private scanList (f: 's -> 'e -> 's) (s: 's) (l : 'e ilist  brick) : 's ilist brick = 
+let private scanList (f: 's -> 'e -> 's) (s: 's) (l : 'e ilist brick) : 's ilist brick = 
     brick {
         let! l = l
         return Seq.scan f s l |> IList.ofSeq

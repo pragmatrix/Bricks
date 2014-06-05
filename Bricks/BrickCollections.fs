@@ -52,6 +52,8 @@ module ISet =
 
         [removed; added] |> Seq.flatten |> materialize s1
 
+    let reset (s: 'e iset) = (Reset s, s)
+
     let inline map f = Seq.map f >> ofSeq
 
 type 'e iset = 'e ISet.iset
@@ -78,6 +80,8 @@ module IList =
     let materialize initial changes = 
         let apply (_, v) c = c, apply c v
         Seq.scan apply (Reset initial, initial) changes |> Seq.skip 1
+
+    let inline reset (l: 'e ilist) = (Reset l, l)
 
     let inline map f = Seq.map f >> ofSeq
 

@@ -7,60 +7,66 @@ open Chain
 type 'v channel = 'v chain brick
 
 module Channel =
-    let make f = makeBrickInit (Chain.empty()) f
-
     type Processor<'s, 't> = 't -> 's seq -> 't
 
-    let makeProcSeq (source : 's channel) (initial: 't) (f : Processor<'s, 't>) = 
-        let deps = [source :>Brick]
-        let sourceHead = ref source.value.Value
-        fun (this: 't brick) ->
-            let sourceTail = source.evaluate()
-            let values = Chain.range !sourceHead sourceTail
-            sourceHead := sourceTail
-            let chain = this.value.Value
-            deps, f chain values
-        |> makeBrickInit initial
+    let makeProcSeq (reset: 's -> 't) (f : Processor<'s, 't>) (source : 's channel) = 
 
-    let source<'e>() =
-        fun (b : 'e channel) -> [], b.value.Value
-        |> make
-
-    // push an element into a source channel
-    let push (c: 'e channel) (element: 'e) =
-        let v = c.value.Value
-        c.write (v.push element)
-
-    // Create a channel by applying a diff function to a brick
-    let track (initial: 'v) (tracker: 'v -> 'v -> 'r seq) (source: 'v brick) : 'r channel =
-
-        let current = ref initial
-
-        fun (this: 'r channel) ->
-            let chain = this.value.Value
-            let value = source.evaluate()
-            let res = tracker !current value
-            current := value
-            [source :> Brick], chain.pushSeq res
-        |> make
-
-    let map (mapper: 's -> 't) (source: 's channel) : 't channel = 
-        fun (chain : 't chain) elements ->
-            elements |> Seq.map mapper |> chain.pushSeq
-        |> makeProcSeq source (Chain.empty())
-
-
-    let back (channel: 's channel) : 's option brick =
-        let chain = ref (channel.value.Value)
+        let prevHead = ref None
 
         brick {
-            let! _ = channel // < dependency only
-            let chain' = (!chain).back
-            chain := chain'
-            match chain'.atEnd with
-            | true -> return None
-            | false -> return Some chain'.value
+            let! current = source
+            let! self = selfValue
+            match !prevHead with
+            | None ->
+                let t = reset current.value
+                prevHead := Some current
+                return t
+            | Some previous ->
+                let sourceValues = Chain.range previous current |> Seq.skip 1
+                prevHead := Some current
+                return (f self.Value sourceValues)
         }
+
+    let source v = Chain.single v |> value
+
+    // push an element into a channel
+    
+    // tbd: what if the channel was never evaluated in between, may be we can only change the
+    // channel's evaluation function, but not its value.
+    
+    let push (c: 'e channel) (element: 'e) =
+        match c.value with
+        | None -> c.write (Chain.single(element))
+        | Some v -> c.write (v.push element)
+
+    // Create a channel by applying a diff function to a brick
+    let track (reset: 'v -> 'r) (diff: 'v -> 'v -> 'r seq) (source: 'v brick) : 'r channel =
+
+        let prevSet = ref None
+
+        brick {
+            let! s = source
+            let! (sv: 'r chain option) = selfValue
+            let res = 
+                match sv with
+                | None -> 
+                    Chain.single(reset s)
+                | Some rc -> 
+                    let diffs = diff (!prevSet).Value s
+                    rc.pushSeq diffs
+            prevSet := Some s
+            return res
+        }
+
+    let map (reset: 's -> 't) (mapper: 's -> 't) (source: 's channel) : 't channel = 
+
+        let reset s = 
+            Chain.single (reset s)
+
+        let processor (chain : 't chain) elements =
+            elements |> Seq.map mapper |> chain.pushSeq
+        
+        makeProcSeq reset processor source
 
 [<assembly:AutoOpen("BrickChannel")>]
 do ()

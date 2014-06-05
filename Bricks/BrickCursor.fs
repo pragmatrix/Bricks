@@ -5,6 +5,7 @@ open BrickChannel
 open BricksCore
 open BrickTime
 
+(*
 
 type ListCursor<'e> = { source: 'e IList.change channel; index: int brick }
 
@@ -27,5 +28,7 @@ let cursor source index =
 
     |> Channel.makeProcSeq source !state 
     |> fun b -> (source, b)
+
+*)
 
     

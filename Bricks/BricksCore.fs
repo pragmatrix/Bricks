@@ -103,7 +103,11 @@ type ManifestMarker<'a> = { instantiator: unit -> 'a }
     with 
         static member create f = { instantiator = f }
 
+type SelfValueMarker() = class
+    end
+
 let inline manifest f = ManifestMarker<_>.create f
+let selfValue = SelfValueMarker()
 
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
@@ -126,6 +130,11 @@ type BrickBuilder() =
                 | Some i -> i
                 | None -> manifest.instantiator()
             cont i b
+
+    member this.Bind (_: SelfValueMarker, cont: 'v option -> Computation<'v>) : Computation<'v> =
+        fun b ->
+            let v = b.value
+            cont v b
 
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
@@ -260,6 +269,6 @@ let transaction = new TransactionBuilder()
 
 let valueOf (brick : Brick<'v>) = if brick.valid then brick.value else None
 let toProgram b = new Program<_>(b)
-
+    
 [<assembly:AutoOpen("BricksCore")>]
 do ()
