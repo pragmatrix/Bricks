@@ -26,6 +26,8 @@ module BrickExtensions =
             this.removeReferrer referrer
             this.tryCollect()
 
+type Versioned<'v> = { value: 'v; next: Versioned<'v> option }
+
 type internal Trace = Brick list
 
 type internal ComputationResult<'v> = Trace * 'v
@@ -34,11 +36,11 @@ type internal Computation<'v> = 'v brick -> ComputationResult<'v>
 
 and 't brick = Brick<'t>
 
-and Brick<'v>(computation : Computation<'v>, ?initial: 'v) =
+and Brick<'v>(computation : Computation<'v>) =
     
     let mutable _comp = computation
     let mutable _trace : Trace = []
-    let mutable _value : 'v option = initial
+    let mutable _value : 'v option = None
     let mutable _alive = false
     let mutable _valid = false
     let mutable _referrer = ISet.empty
@@ -97,7 +99,6 @@ and Brick<'v>(computation : Computation<'v>, ?initial: 'v) =
 type 't bricks = seq<'t brick>
 
 let internal makeBrick<'v> f = Brick<'v>(f)
-let internal makeBrickInit<'v> initial f = Brick<'v>(f, initial)
 
 type ManifestMarker<'a> = { instantiator: unit -> 'a }
     with 
