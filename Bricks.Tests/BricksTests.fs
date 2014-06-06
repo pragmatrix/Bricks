@@ -26,3 +26,76 @@ type BrickTests() =
     [<Test>]
     member this.returnFromCreatesANewBrick() =
         obj.ReferenceEquals(c, d) |> should equal false
+
+
+    [<Test>]
+    member this.historyDoesNotExistOnNewValue() =
+        let a = value 0
+        let b = brick {
+            let! ha = historyOf a
+            return ha
+        }
+
+        b.evaluate() |> should equal (Reset 0)
+
+    [<Test>]
+    member this.historyDoesNotExistIfValueWasChangedButNotEvaluatedBefore() =
+        let a = value 0
+        () |> transaction { write a 1 }
+        let b = brick {
+            let! ha = historyOf a
+            return ha
+        }
+
+        b.evaluate() |> should equal (Reset 1)
+
+    [<Test>]
+    member this.historyExistsIfValueWasEvaluated() =
+        let a = value 0
+        let b = brick {
+            let! ha = historyOf a
+            return ha
+        }
+
+        b.evaluate() |> should equal (Reset 0)
+
+        () |> transaction { write a 1 }
+
+        b.evaluate() |> should equal (History ([1] |> List.toSeq))
+
+        () |> transaction { write a 2 }
+
+        b.evaluate() |> should equal (Some ([2] |> List.toSeq))
+
+
+    [<Test>]
+    member this.historyWithThirdParty() =
+        let a = value 0
+        let b = brick {
+            let! ha = historyOf a
+            return ha
+        }
+
+        let c = brick {
+            let! a = a
+            return a
+        }
+
+        // need to evaluate b once, so that we get a history
+        b.evaluate() |> ignore
+        c.evaluate() |> ignore
+        () |> transaction { write a 1 }
+        c.evaluate() |> ignore
+        () |> transaction { write a 2 }
+        c.evaluate() |> ignore
+        b.evaluate() |> should equal (Some ([1;2] |> List.toSeq))
+
+
+        
+
+
+
+
+
+
+

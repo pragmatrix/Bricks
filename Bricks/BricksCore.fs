@@ -13,11 +13,15 @@ open InlineHelper
 
 (** BRICK, ENVIRONMENT **)
 
-type Brick =
+type Versioned = interface
+    end
+
+and Brick =
     abstract member addReferrer : Brick -> unit
     abstract member removeReferrer : Brick -> unit
-    abstract member invalidate : unit -> unit
     abstract member tryCollect : unit -> unit
+    abstract member invalidate : unit -> unit
+    abstract member versioned : Versioned with get
 
 [<AutoOpen>]
 module BrickExtensions =
@@ -26,11 +30,41 @@ module BrickExtensions =
             this.removeReferrer referrer
             this.tryCollect()
 
-type Versioned<'v> = { value: 'v; next: Versioned<'v> option }
+// we could use Chain for that.
+
+type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
+
+    interface Versioned
+
+    static member single (value: 'v) = { value = value; next = None }
+
+    static member ofSeq (s: 'v seq) =
+        let h = Versioned.single (Seq.head s)
+        h.pushSeq (Seq.skip 1 s) |> ignore
+        h
+
+    member this.push (value: 'v) =
+        assert(this.next.IsNone)
+        let n = Versioned<'v>.single value
+        this.next <- Some n
+        n
+
+    member this.tail =
+        match this.next with
+        | None -> []
+        | Some next -> next.value :: next.tail
+
+    member this.pushSeq values = 
+        values |> (Seq.fold (fun (c : Versioned<_>) v -> c.push v)) this
+
 
 type internal Trace = Brick list
 
-type internal ComputationResult<'v> = Trace * 'v
+type History<'v> = 
+    | Reset of 'v
+    | History of 'v seq
+
+type internal ComputationResult<'v> = Trace * 'v list
 
 type internal Computation<'v> = 'v brick -> ComputationResult<'v>
 
@@ -39,15 +73,14 @@ and 't brick = Brick<'t>
 and Brick<'v>(computation : Computation<'v>) =
     
     let mutable _comp = computation
-    let mutable _trace : Trace = []
-    let mutable _value : 'v option = None
+    let mutable _trace : IMap<Brick, Versioned> = IMap.empty
+    let mutable _versioned : Versioned<'v> option = None
     let mutable _alive = false
     let mutable _valid = false
     let mutable _referrer = ISet.empty
 
-    member internal this.trace = _trace
     member internal this.valid = _valid
-    member internal this.value = _value
+    member internal this.value = _versioned |> Option.map(fun v -> v.value) 
     member internal this.instance : 'v option = if _alive then this.value else None
 
     interface Brick with
@@ -65,29 +98,45 @@ and Brick<'v>(computation : Computation<'v>) =
         member this.tryCollect() =
             if (_valid && _referrer.Count = 0) then
                 this.invalidate()
-                match box _value.Value with
+                match box this.value.Value with
                 | :? IDisposable as d -> d.Dispose()
                 | _ -> ()
-                _trace |> List.iter (fun dep -> dep.removeReferrerAndTryCollect this)
+                _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrerAndTryCollect this)
+
+        member this.versioned = _versioned.Value :> Versioned
 
     member this.evaluate() : 'v = 
-        if _valid then _value.Value else
+        if _valid then this.value.Value else
         let t, c = _comp this
         // relink referrers (tbd: do this incrementally)
-        _trace |> List.iter (fun dep -> dep.removeReferrer this)
-        t |> List.iter (fun dep -> dep.addReferrer this)
+        _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer this)
+        t |> Seq.iter (fun dep -> dep.addReferrer this)
 
-        _trace |> List.iter (fun dep -> dep.tryCollect())
+        _trace.Keys |> Seq.iter (fun dep -> dep.tryCollect())
 
-        _trace <- t
-        _value <- Some c
+        _trace <- t |> Seq.map (fun dep -> dep, dep.versioned) |> IMap.ofSeq
+
+        _versioned <-        
+            match _versioned with
+            | None -> Versioned<'v>.ofSeq c
+            | Some v -> v.pushSeq c
+            |> Some
+        
         _alive <- true
         _valid <- true
-        c
+        _versioned.Value.value
+
+    member this.history (dep : 'd brick) : History<'d> = 
+        let depV = dep.evaluate()
+        match _trace.get dep with
+        | None -> Reset depV
+        | Some (:? Versioned<'d> as v) ->
+            History (v.tail |> Seq.ofList)
+        | _ -> failwith "internal error"
 
     member this.write v =
         this.invalidate()
-        _comp <- fun _ -> [], v
+        _comp <- fun _ -> [], [v]
 
     member this.reset() = 
         this.invalidate()
@@ -100,50 +149,56 @@ type 't bricks = seq<'t brick>
 
 let internal makeBrick<'v> f = Brick<'v>(f)
 
-type ManifestMarker<'a> = { instantiator: unit -> 'a }
-    with 
-        static member create f = { instantiator = f }
+// i want these in a module named Brick
 
-type SelfValueMarker() = class
-    end
+type ManifestMarker<'a> = ManifestMarker of (unit -> 'a)
+type SelfValueMarker = SelfValueMarker
+type HistoryMarker<'v> = HistoryMarker of Brick<'v>
 
-let inline manifest f = ManifestMarker<_>.create f
-let selfValue = SelfValueMarker()
+let inline manifest f = ManifestMarker f
+let selfValue = SelfValueMarker
+let inline historyOf b = HistoryMarker b
 
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
         fun b ->
             let depValue = dependency.evaluate()
-            let contDep, contValue = cont depValue b
-            dependency:>Brick :: contDep, contValue
+            let contDep, r = cont depValue b
+            dependency:>Brick :: contDep, r
 
     member this.Bind (dependencies: 'dep brick seq, cont: 'dep seq -> Computation<'next>) : Computation<'next> =
         fun b ->
             let depValues = dependencies |> Seq.map (fun d -> d.evaluate())
-            let contDep, contValue = cont depValues b
+            let contDep, r = cont depValues b
             let thisDeps = dependencies |> Seq.cast |> Seq.toList
-            thisDeps @ contDep |> Seq.toList, contValue
+            thisDeps @ contDep |> Seq.toList, r
 
-    member this.Bind (manifest: ManifestMarker<'i>, cont: 'i -> Computation<'i>) : Computation<'i> =
+    member this.Bind (ManifestMarker instantiator, cont: 'i -> Computation<'i>) : Computation<'i> =
         fun b ->
             let i = 
                 match b.instance with
                 | Some i -> i
-                | None -> manifest.instantiator()
+                | None -> instantiator()
             cont i b
 
-    member this.Bind (_: SelfValueMarker, cont: 'v option -> Computation<'v>) : Computation<'v> =
+    member this.Bind (SelfValueMarker, cont: 'v option -> Computation<'v>) : Computation<'v> =
         fun b ->
             let v = b.value
             cont v b
 
+    member this.Bind (HistoryMarker dep, cont: History<'d> -> Computation<'v>) : Computation<'v> =
+        fun b ->
+            let h = b.history dep
+            let contDep, r = cont h b
+            dep:>Brick :: contDep, r
+
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
             let value = brick.evaluate();
-            [brick:>Brick], value
+            [brick:>Brick], [value]
 
     member this.Return value = 
-        fun _ -> [], value
+        fun _ -> [], [value]
 
     member this.Run comp = makeBrick comp
 
