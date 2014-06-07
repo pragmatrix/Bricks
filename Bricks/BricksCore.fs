@@ -170,7 +170,7 @@ type BrickBuilder() =
             let depValues = dependencies |> Seq.map (fun d -> d.evaluate())
             let contDep, r = cont depValues b
             let thisDeps = dependencies |> Seq.cast |> Seq.toList
-            thisDeps @ contDep |> Seq.toList, r
+            thisDeps @ contDep, r
 
     member this.Bind (ManifestMarker instantiator, cont: 'i -> Computation<'i>) : Computation<'i> =
         fun b ->
