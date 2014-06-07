@@ -110,6 +110,38 @@ type BrickTests() =
 
         b.evaluate() |> should equal (History [1;3])
 
+    [<Test>]
+    member this.sharedHistory() = 
+        let source = value 0
+
+        let a = brick {
+            yield! source
+            yield 3
+        }
+
+        let b = brick {
+            let! ha = historyOf a
+            return ha
+        }
+
+         let c = brick {
+            let! ha = historyOf a
+            return ha
+        }
+
+        b.evaluate() |> should equal (Reset 3)
+        c.evaluate() |> should equal (Reset 3)
+
+        () |> transaction { write source 1 }
+
+        b.evaluate() |> should equal (History [1;3])
+
+        () |> transaction { write source 2 }
+
+        b.evaluate() |> should equal (History [2;3])
+        c.evaluate() |> should equal (History [1;3;2;3])
+
+        
         
 
 
