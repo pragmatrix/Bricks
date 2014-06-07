@@ -15,7 +15,7 @@ module Channel =
 
         brick {
             let! current = source
-            let! self = selfValue
+            let! self = valueOfSelf
             match !prevHead with
             | None ->
                 let t = reset current.value
@@ -46,7 +46,7 @@ module Channel =
 
         brick {
             let! s = source
-            let! (sv: 'r chain option) = selfValue
+            let! (sv: 'r chain option) = valueOfSelf
             let res = 
                 match sv with
                 | None -> 

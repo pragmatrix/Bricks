@@ -155,7 +155,7 @@ type SelfValueMarker = SelfValueMarker
 type HistoryMarker<'v> = HistoryMarker of Brick<'v>
 
 let inline manifest f = ManifestMarker f
-let selfValue = SelfValueMarker
+let valueOfSelf = SelfValueMarker
 let inline historyOf b = HistoryMarker b
 
 type BrickBuilder() =
