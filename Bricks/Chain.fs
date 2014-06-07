@@ -43,7 +43,7 @@ type Chain<'e> = { value: 'e; mutable next: Chain<'e> option }
             next             
                      
         member this.pushSeq values = 
-            values |> (Seq.fold (fun (c : Chain<'e>) v -> c.push v)) this
+            values |> Seq.fold (fun (c : Chain<'e>) v -> c.push v) this
 
         member this.append v = this.push v |> ignore
 

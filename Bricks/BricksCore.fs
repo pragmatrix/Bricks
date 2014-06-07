@@ -55,7 +55,7 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
         | Some next -> next.value :: next.tail
 
     member this.pushSeq values = 
-        values |> (Seq.fold (fun (c : Versioned<_>) v -> c.push v)) this
+        values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
 
 
 type internal Trace = Brick list
@@ -118,7 +118,7 @@ and Brick<'v>(computation : Computation<'v>) =
 
         _versioned <-        
             match _versioned with
-            | None -> Versioned<'v>.ofSeq c
+            | None -> Versioned<'v>.single (Seq.last c)
             | Some v -> v.pushSeq c
             |> Some
         
@@ -197,8 +197,15 @@ type BrickBuilder() =
             let value = brick.evaluate();
             [brick:>Brick], [value]
 
-    member this.Return value = 
-        fun _ -> [], [value]
+    member this.Return value = fun _ -> [], [value]
+    member this.Yield value = this.Return value
+    member this.YieldFrom (dep: 'dep brick) = this.ReturnFrom dep
+    member this.Combine (first: Computation<'v>, second: Computation<'v>) =
+        fun b ->
+            let (fd, fv) = first b
+            let (sd, sv) = second b
+            fd @ sd, fv @ sv
+    member this.Delay (f: unit -> Computation<'v>) : Computation<'v> = f()
 
     member this.Run comp = makeBrick comp
 

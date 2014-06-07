@@ -65,7 +65,7 @@ type BrickTests() =
 
         () |> transaction { write a 2 }
 
-        b.evaluate() |> should equal (Some ([2] |> List.toSeq))
+        b.evaluate() |> should equal (History ([2] |> List.toSeq))
 
 
     [<Test>]
@@ -88,8 +88,27 @@ type BrickTests() =
         c.evaluate() |> ignore
         () |> transaction { write a 2 }
         c.evaluate() |> ignore
-        b.evaluate() |> should equal (Some ([1;2] |> List.toSeq))
+        b.evaluate() |> should equal (History ([1;2] |> List.toSeq))
 
+    [<Test>]
+    member this.yieldWithHistory() = 
+        let source = value 0
+
+        let a = brick {
+            yield! source
+            yield 3
+        }
+
+        let b = brick {
+            let! ha = historyOf a
+            return ha
+        }
+
+        b.evaluate() |> should equal (Reset 3)
+
+        () |> transaction { write source 1 }
+
+        b.evaluate() |> should equal (History ([1;3] |> List.toSeq))
 
         
 
