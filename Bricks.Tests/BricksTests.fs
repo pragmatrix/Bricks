@@ -61,11 +61,11 @@ type BrickTests() =
 
         () |> transaction { write a 1 }
 
-        b.evaluate() |> should equal (History ([1] |> List.toSeq))
+        b.evaluate() |> should equal (History [1])
 
         () |> transaction { write a 2 }
 
-        b.evaluate() |> should equal (History ([2] |> List.toSeq))
+        b.evaluate() |> should equal (History [2])
 
 
     [<Test>]
@@ -88,7 +88,7 @@ type BrickTests() =
         c.evaluate() |> ignore
         () |> transaction { write a 2 }
         c.evaluate() |> ignore
-        b.evaluate() |> should equal (History ([1;2] |> List.toSeq))
+        b.evaluate() |> should equal (History [1;2])
 
     [<Test>]
     member this.yieldWithHistory() = 
@@ -108,7 +108,7 @@ type BrickTests() =
 
         () |> transaction { write source 1 }
 
-        b.evaluate() |> should equal (History ([1;3] |> List.toSeq))
+        b.evaluate() |> should equal (History [1;3])
 
         
 

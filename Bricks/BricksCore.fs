@@ -62,7 +62,7 @@ type internal Trace = Brick list
 
 type History<'v> = 
     | Reset of 'v
-    | History of 'v seq
+    | History of 'v list
 
 type internal ComputationResult<'v> = Trace * 'v list
 
@@ -130,8 +130,7 @@ and Brick<'v>(computation : Computation<'v>) =
         let depV = dep.evaluate()
         match _trace.get dep with
         | None -> Reset depV
-        | Some (:? Versioned<'d> as v) ->
-            History (v.tail |> Seq.ofList)
+        | Some (:? Versioned<'d> as v) -> History v.tail
         | _ -> failwith "internal error"
 
     member this.write v =
