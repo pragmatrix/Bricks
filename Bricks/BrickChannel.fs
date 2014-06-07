@@ -2,71 +2,52 @@
 
 open BricksCore
 
-open Chain
-
-type 'v channel = 'v chain brick
+type 'v channel = 'v brick
 
 module Channel =
-    type Processor<'s, 't> = 't -> 's seq -> 't
+    type Processor<'s, 't> = 's seq -> 't seq
 
-    let makeProcSeq (reset: 's -> 't) (f : Processor<'s, 't>) (source : 's channel) = 
-
-        let prevHead = ref None
+    let mapChunked (reset: 's -> 't) (f : Processor<'s, 't>) (source : 's channel) : 't channel= 
 
         brick {
-            let! current = source
-            let! self = valueOfSelf
-            match !prevHead with
-            | None ->
-                let t = reset current.value
-                prevHead := Some current
-                return t
-            | Some previous ->
-                let sourceValues = Chain.range previous current |> Seq.skip 1
-                prevHead := Some current
-                return (f self.Value sourceValues)
+            let! current = historyOf source
+            match current with
+            | Reset v -> yield reset v
+            | Progress values -> yield! Progress (f values)
         }
 
-    let source v = Chain.single v |> value
+    let inline source v = value v
 
     // push an element into a channel
     
     // tbd: what if the channel was never evaluated in between, may be we can only change the
     // channel's evaluation function, but not its value.
     
+    (*
+
     let push (c: 'e channel) (element: 'e) =
         match c.value with
         | None -> c.write (Chain.single(element))
         | Some v -> c.write (v.push element)
 
+    *)
+
     // Create a channel by applying a diff function to a brick
     let track (reset: 'v -> 'r) (diff: 'v -> 'v -> 'r seq) (source: 'v brick) : 'r channel =
 
-        let prevSet = ref None
-
         brick {
+            let! prev = previousOf source
             let! s = source
-            let! (sv: 'r chain option) = valueOfSelf
-            let res = 
-                match sv with
-                | None -> 
-                    Chain.single(reset s)
-                | Some rc -> 
-                    let diffs = diff (!prevSet).Value s
-                    rc.pushSeq diffs
-            prevSet := Some s
-            return res
+            match prev with
+            | None ->
+                return (reset s)
+            | Some prev ->
+                let d = diff prev s
+                return! Progress d 
         }
 
     let map (reset: 's -> 't) (mapper: 's -> 't) (source: 's channel) : 't channel = 
-
-        let reset s = 
-            Chain.single (reset s)
-
-        let processor (chain : 't chain) elements =
-            elements |> Seq.map mapper |> chain.pushSeq
-        
-        makeProcSeq reset processor source
+        mapChunked reset (Seq.map mapper) source
 
 [<assembly:AutoOpen("BrickChannel")>]
 do ()

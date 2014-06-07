@@ -61,11 +61,11 @@ type BrickTests() =
 
         () |> transaction { write a 1 }
 
-        b.evaluate() |> should equal (History [1])
+        b.evaluate() |> should equal (Progress [1])
 
         () |> transaction { write a 2 }
 
-        b.evaluate() |> should equal (History [2])
+        b.evaluate() |> should equal (Progress [2])
 
 
     [<Test>]
@@ -88,7 +88,7 @@ type BrickTests() =
         c.evaluate() |> ignore
         () |> transaction { write a 2 }
         c.evaluate() |> ignore
-        b.evaluate() |> should equal (History [1;2])
+        b.evaluate() |> should equal (Progress [1;2])
 
     [<Test>]
     member this.yieldWithHistory() = 
@@ -108,7 +108,7 @@ type BrickTests() =
 
         () |> transaction { write source 1 }
 
-        b.evaluate() |> should equal (History [1;3])
+        b.evaluate() |> should equal (Progress [1;3])
 
     [<Test>]
     member this.sharedHistory() = 
@@ -134,14 +134,77 @@ type BrickTests() =
 
         () |> transaction { write source 1 }
 
-        b.evaluate() |> should equal (History [1;3])
+        b.evaluate() |> should equal (Progress [1;3])
 
         () |> transaction { write source 2 }
 
-        b.evaluate() |> should equal (History [2;3])
-        c.evaluate() |> should equal (History [1;3;2;3])
+        b.evaluate() |> should equal (Progress [2;3])
+        c.evaluate() |> should equal (Progress [1;3;2;3])
 
+    [<Test>]
+    member this.previous() =
+
+        let source = value 0
+
+        let a = brick {
+            let! p = previousOf source
+            let! s = source
+            return (p, s)
+        }
+
+        let none = option<int>.None
+
+        a.evaluate() |> should equal (none, 0)
+
+        () |> transaction { write source 1 }
+
+        a.evaluate() |> should equal (Some 0, 1)
+      
+        () |> transaction { write source 2 }
+        () |> transaction { write source 3 }
         
+        a.evaluate() |> should equal (Some 1, 3)
+
+    [<Test>]
+    member this.previousGetsLostIfSourceIsNotReferencedAnymore() =
+        
+        let source = value 0
+        let useSource = value true
+
+        let a = brick {
+            let! p = previousOf source
+            let! us = useSource
+            if (us) then
+                let! s = source
+                return (p, Some s)
+            else
+                return (p, None)
+        }
+
+        let none = option<int>.None
+
+        a.evaluate() |> should equal (none, Some 0)
+
+        () |> transaction { write source 1 }
+
+        a.evaluate() |> should equal (Some 0, Some 1)
+
+        () |> transaction { write useSource false }
+
+        a.evaluate() |> should equal (Some 1, none)
+
+        // source is not anymore referenced!
+        () |> transaction { write source 2 }
+
+        // but previous exists in the next run, even though we don't access source animore.
+        a.evaluate() |> should equal (Some 1, none)
+
+        // and even though we switch source now on, the previous is lost now
+        () |> transaction { write useSource true }
+        a.evaluate() |> should equal (none, Some 2)
+
+
+
         
 
 

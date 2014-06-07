@@ -2,7 +2,6 @@
 
 module BrickTime
 
-open Chain
 open BrickCollections
 open BricksCore
 open BrickChannel
@@ -61,12 +60,8 @@ let private mapSet f channel =
 
     Channel.map reset map channel 
 
-let private materializeCollection (c : ('d * 'v) channel) = 
-    brick {
-        let! chain = c
-        let (_, value) = chain.value
-        return value
-    }
+let private materializeCollection (s : ('d * 'v) channel) = 
+    convert (fun (_, value) -> value) s
 
 type Materializer = Materializer with
 

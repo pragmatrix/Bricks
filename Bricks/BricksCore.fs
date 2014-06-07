@@ -49,6 +49,8 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
         this.next <- Some n
         n
 
+    member this.head = this.value
+
     member this.tail =
         match this.next with
         | None -> []
@@ -62,7 +64,7 @@ type internal Trace = Brick list
 
 type History<'v> = 
     | Reset of 'v
-    | History of 'v list
+    | Progress of 'v seq
 
 type internal ComputationResult<'v> = Trace * 'v list
 
@@ -130,7 +132,13 @@ and Brick<'v>(computation : Computation<'v>) =
         let depV = dep.evaluate()
         match _trace.get dep with
         | None -> Reset depV
-        | Some (:? Versioned<'d> as v) -> History v.tail
+        | Some (:? Versioned<'d> as v) -> Progress v.tail
+        | _ -> failwith "internal error"
+
+    member this.previous (dep : 'd brick) : 'd option = 
+        match _trace.get dep with
+        | None -> None
+        | Some (:? Versioned<'d> as v) -> Some v.head
         | _ -> failwith "internal error"
 
     member this.write v =
@@ -153,10 +161,13 @@ let internal makeBrick<'v> f = Brick<'v>(f)
 type ManifestMarker<'a> = ManifestMarker of (unit -> 'a)
 type SelfValueMarker = SelfValueMarker
 type HistoryMarker<'v> = HistoryMarker of Brick<'v>
+type PreviousMarker<'v> = PreviousMarker of Brick<'v>
 
 let inline manifest f = ManifestMarker f
 let valueOfSelf = SelfValueMarker
 let inline historyOf b = HistoryMarker b
+let inline previousOf b = PreviousMarker b
+
 
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
@@ -191,20 +202,47 @@ type BrickBuilder() =
             let contDep, r = cont h b
             dep:>Brick :: contDep, r
 
+    member this.Bind (PreviousMarker dep, cont: 'd option -> Computation<'v>) : Computation<'v> =
+        fun b ->
+            // note: we don't add the brick to the list of dependencies.
+            let p = b.previous dep
+            let contDep, r = cont p b
+            contDep, r
+
+    member this.Return value = fun _ -> [], [value]
+    member this.Yield value = this.Return value
+
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
             let value = brick.evaluate();
             [brick:>Brick], [value]
 
-    member this.Return value = fun _ -> [], [value]
-    member this.Yield value = this.Return value
     member this.YieldFrom (dep: 'dep brick) = this.ReturnFrom dep
+
+    // seeing History as a separate category, we can justify using yield! instead of yield. 
+    // yield can not be overloaded.
+    member this.ReturnFrom (h: History<'v>) =
+        match h with 
+        | Reset v -> this.Return v
+        | Progress p -> fun _ -> [], p |> Seq.toList
+
+    member this.YieldFrom (h: History<'v>) =
+        match h with 
+        | Reset v -> this.Yield v
+        | Progress p -> fun _ -> [], p |> Seq.toList
+
     member this.Combine (first: Computation<'v>, second: Computation<'v>) =
         fun b ->
             let (fd, fv) = first b
             let (sd, sv) = second b
             fd @ sd, fv @ sv
     member this.Delay (f: unit -> Computation<'v>) : Computation<'v> = f()
+
+    [<CustomOperation("yieldSeq")>]
+    member this.Write(nested : Computation<'v>, sequence: 'v seq) =
+        fun b ->
+            let (nd, nv) = nested b
+            nd, nv @ (sequence |> Seq.toList)
 
     member this.Run comp = makeBrick comp
 
@@ -284,6 +322,7 @@ let value (v : 'v) : 'v brick =
     }
 
 /// A conversion brick applies a function to a brick.
+/// could be a map override?
 
 let convert (c: 's -> 't) (source: 's brick) : 't brick =
     brick {
