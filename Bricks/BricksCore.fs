@@ -31,8 +31,6 @@ module BrickExtensions =
             this.removeReferrer referrer
             this.tryCollect()
 
-// we could use Chain for that.
-
 type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
 
     interface Versioned
@@ -304,8 +302,6 @@ let brick = new BrickBuilder()
     previous state of the brick, never to the values that are changed by 
     the transaction.
 *)
-
-// tbd: we could just chain functions here, so TransactionState could be unit -> unit
 
 type Transaction = unit -> unit
 
