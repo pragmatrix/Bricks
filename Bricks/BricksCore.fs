@@ -51,9 +51,9 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
     member this.head = this.value
 
     member this.tail =
-        match this.next with
-        | None -> []
-        | Some next -> next.value :: next.tail
+        this.next
+        |> Seq.unfold (Option.map (fun n -> n.value, n.next))
+        |> Seq.toList
 
     member this.pushSeq values = 
         values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
