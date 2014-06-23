@@ -204,9 +204,41 @@ type BrickTests() =
         a.evaluate() |> should equal (none, Some 2)
 
 
+    [<Test>]
+    member this.brickSetupIsDelayed() = 
+        let x = ref 0
+            
+        let _ = brick {
+            x := 1
+            return x
+        }
 
+        (!x) |> should equal 0
+
+(*
+    [<Test>]        
+    member this.recursiveEvaluationDoesNotResultInAStackOverflow() = 
+
+        let v : int brick option ref = ref None
+
+        let w = brick {
+            let! x = (!v).Value
+            return x * 2
+        }
+
+        v := 
+            brick {
+                let! y = w
+                return y * 2
+            } 
+            |> Some
+
+*)
+        
         
 
+
+        
 
 
 

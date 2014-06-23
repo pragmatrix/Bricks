@@ -236,7 +236,7 @@ type BrickBuilder() =
             let (fd, fv) = first b
             let (sd, sv) = second b
             fd @ sd, fv @ sv
-    member this.Delay (f: unit -> Computation<'v>) : Computation<'v> = f()
+
 
     [<CustomOperation("yieldSeq")>]
     member this.Write(nested : Computation<'v>, sequence: 'v seq) =
@@ -245,6 +245,10 @@ type BrickBuilder() =
             nd, nv @ (sequence |> Seq.toList)
 
     member this.Run comp = makeBrick comp
+
+    member this.Delay (f: unit -> Computation<'v>) : Computation<'v> = 
+        fun b ->
+            f () b
 
 let brick = new BrickBuilder()
 
