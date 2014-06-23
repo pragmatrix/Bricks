@@ -9,15 +9,14 @@ open System.Collections.Generic
 open System.Linq
 
 open BrickCollections
+open VersionedStore
+
 open InlineHelper
 open Trampoline
 
 (** BRICK, ENVIRONMENT **)
 
-type Versioned = interface
-    end
-
-and Brick =
+type Brick =
     abstract member addReferrer : Brick -> unit
     abstract member removeReferrer : Brick -> unit
     abstract member tryCollect : unit -> unit
@@ -31,32 +30,8 @@ module BrickExtensions =
             this.removeReferrer referrer
             this.tryCollect()
 
-type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
 
-    interface Versioned
 
-    static member single (value: 'v) = { value = value; next = None }
-
-    static member ofSeq (s: 'v seq) =
-        let h = Versioned.single (Seq.head s)
-        h.pushSeq (Seq.skip 1 s) |> ignore
-        h
-
-    member this.push (value: 'v) =
-        assert(this.next.IsNone)
-        let n = Versioned<'v>.single value
-        this.next <- Some n
-        n
-
-    member this.head = this.value
-
-    member this.tail =
-        this.next
-        |> Seq.unfold (Option.map (fun n -> n.value, n.next))
-        |> Seq.toList
-
-    member this.pushSeq values = 
-        values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
 
 type internal Trace = Brick list
 
@@ -67,6 +42,8 @@ type History<'v> =
 type internal ComputationResult<'v> = ITramp<Trace * 'v list>
 
 type internal Computation<'v> = 'v brick -> ComputationResult<'v>
+
+and Context<'v> = 'v brick * Store
 
 and 't brick = Brick<'t>
 
@@ -79,39 +56,9 @@ and Brick<'v>(computation : Computation<'v>) as self =
     let mutable _valid = false
     let mutable _referrer = ISet.empty
 
-
-    let eval = 
-        let v() = _versioned |> Option.map(fun v -> v.value)
-
-        tramp {
-            if _valid then
-                return v().Value 
-            else
-            let! t, c = _comp self
-            // relink referrers (tbd: do this incrementally)
-            _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer self)
-            t |> Seq.iter (fun dep -> dep.addReferrer self)
-
-            _trace.Keys |> Seq.iter (fun dep -> dep.tryCollect())
-
-            _trace <- t |> Seq.map (fun dep -> dep, dep.versioned) |> IMap.ofSeq
-
-            _versioned <-        
-                match _versioned with
-                | None -> Versioned<'v>.single (Seq.last c)
-                | Some v -> v.pushSeq c
-                |> Some
-        
-            _alive <- true
-            _valid <- true
-            return _versioned.Value.value
-        }
-
-
     member internal this.valid = _valid
     member internal this.value = _versioned |> Option.map(fun v -> v.value) 
     member internal this.instance : 'v option = if _alive then this.value else None
-
 
     interface Brick with
         member this.addReferrer r =
@@ -135,10 +82,32 @@ and Brick<'v>(computation : Computation<'v>) as self =
 
         member this.versioned = _versioned.Value :> Versioned
 
+    member this.evaluate() = this.evaluateT().Run()
 
-    member this.evaluate() = eval.Run()
+    member this.evaluateT() : ITramp<'v> = 
+        tramp {
+            if _valid then
+                return this.value.Value 
+            else
+            let! t, c = _comp self
+            // relink referrers (tbd: do this incrementally)
+            _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer self)
+            t |> Seq.iter (fun dep -> dep.addReferrer self)
 
-    member this.evaluateT() : ITramp<'v> = eval
+            _trace.Keys |> Seq.iter (fun dep -> dep.tryCollect())
+
+            _trace <- t |> Seq.map (fun dep -> dep, dep.versioned) |> IMap.ofSeq
+
+            _versioned <-        
+                match _versioned with
+                | None -> Versioned<'v>.single (Seq.last c)
+                | Some v -> v.pushSeq c
+                |> Some
+        
+            _alive <- true
+            _valid <- true
+            return _versioned.Value.value
+        }
 
     member this.history (dep : 'd brick) = 
         tramp {

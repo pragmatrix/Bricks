@@ -57,6 +57,7 @@
     <Compile Include="BrickCollections.fs" />
     <Compile Include="InlineHelper.fs" />
     <Compile Include="Trampoline.fs" />
+    <Compile Include="VersionedStore.fs" />
     <Compile Include="BricksCore.fs" />
     <Compile Include="BrickChannel.fs" />
     <Compile Include="BrickTime.fs" />
