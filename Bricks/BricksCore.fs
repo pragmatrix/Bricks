@@ -86,8 +86,8 @@ and Brick<'v>(computation : Computation<'v>) as self =
             let trace = store.getTraceOrDefault this
 
             // relink referrers (tbd: do this incrementally)
-            trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer self)
-            newTrace |> Seq.iter (fun dep -> dep.addReferrer self)
+            trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer this)
+            newTrace |> Seq.iter (fun dep -> dep.addReferrer this)
             trace.Keys |> Seq.iter (fun dep -> dep.tryCollect store)
             let newTraceMap = newTrace |> Seq.map (fun dep -> dep, store.getValue dep) |> IMap.ofSeq
 
