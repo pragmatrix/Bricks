@@ -2,6 +2,8 @@
 
 open System.Collections.Generic
 
+open BrickCollections
+
 type Versioned = interface
     end
 
@@ -33,15 +35,35 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
         values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
 
 
-type StoreRecord = Versioned
+type Brick =
+    abstract member addReferrer : Brick -> unit
+    abstract member removeReferrer : Brick -> unit
+    abstract member tryCollect : Store -> unit
+    abstract member invalidate : unit -> unit
 
-type Store() = 
+and StoreRecord = { value: Versioned; trace: IMap<Brick, Versioned> }
+
+and Store() = 
     let _store = Dictionary<obj, StoreRecord>()
 
-    member this.store brick value = _store.[brick] <- value
+    member this.store brick record = _store.[brick] <- record
     member this.remove brick = _store.Remove brick
     member this.tryGet brick = _store.TryGetValue brick
          
 
 type Store with
-    member this.getValue brick = this.tryGet brick |> snd
+    member this.get brick = 
+        this.tryGet brick |> snd
+
+    member this.tryGetValue brick = 
+        match this.tryGet brick with
+        | (true, { value = value }) -> Some value
+        | _ -> None
+
+    member this.getValue brick = 
+        (this.tryGetValue brick).Value
+
+    member this.getTraceOrDefault brick =
+        match this.tryGet brick with
+        | (true, { trace = trace }) -> trace
+        | _ -> IMap.empty

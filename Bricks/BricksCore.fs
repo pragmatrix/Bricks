@@ -16,12 +16,7 @@ open Trampoline
 
 (** BRICK, ENVIRONMENT **)
 
-type Brick =
-    abstract member addReferrer : Brick -> unit
-    abstract member removeReferrer : Brick -> unit
-    abstract member tryCollect : Store -> unit
-    abstract member invalidate : unit -> unit
-    abstract member versioned : Store -> Versioned
+
 
 [<AutoOpen>]
 module BrickExtensions =
@@ -29,9 +24,6 @@ module BrickExtensions =
         member this.removeReferrerAndTryCollect referrer store =
             this.removeReferrer referrer
             this.tryCollect store
-
-
-
 
 type internal Trace = Brick list
 
@@ -50,16 +42,13 @@ and 't brick = Brick<'t>
 and Brick<'v>(computation : Computation<'v>) as self =
     
     let mutable _comp = computation
-    let mutable _trace : IMap<Brick, Versioned> = IMap.empty
     let mutable _alive = false
     let mutable _valid = false
     let mutable _referrer = ISet.empty
 
     member internal this.valid = _valid
     member internal this.value (store: Store) = 
-        match store.tryGet this with
-        | (true, v) -> Some (v :?>Versioned<'v>).value
-        | _ -> None
+        store.tryGetValue this |> Option.map (fun v -> (v:?> Versioned<'v>).value)
 
     member internal this.instance (store: Store) : 'v option = if _alive then this.value store else None
 
@@ -78,12 +67,13 @@ and Brick<'v>(computation : Computation<'v>) as self =
         member this.tryCollect store =
             if (_valid && _referrer.Count = 0) then
                 this.invalidate()
-                match box ((this.value store) .Value) with
+                let record = store.get this
+                let value : 'v = (record.value :?> Versioned<'v>).value
+                match box value with
                 | :? IDisposable as d -> d.Dispose()
                 | _ -> ()
-                _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrerAndTryCollect this store)
-
-        member this.versioned store = store.tryGet this |> snd
+                let trace = record.trace
+                trace.Keys |> Seq.iter (fun dep -> dep.removeReferrerAndTryCollect this store)
 
     member this.evaluate store = (this.evaluateT store).Run()
 
@@ -92,21 +82,21 @@ and Brick<'v>(computation : Computation<'v>) as self =
             if _valid then
                 return (this.value store).Value 
             else
-            let! t, c = _comp (self, store)
+            let! newTrace, c = _comp (self, store)
+            let trace = store.getTraceOrDefault this
+
             // relink referrers (tbd: do this incrementally)
-            _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer self)
-            t |> Seq.iter (fun dep -> dep.addReferrer self)
-
-            _trace.Keys |> Seq.iter (fun dep -> dep.tryCollect store)
-
-            _trace <- t |> Seq.map (fun dep -> dep, dep.versioned store) |> IMap.ofSeq
+            trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer self)
+            newTrace |> Seq.iter (fun dep -> dep.addReferrer self)
+            trace.Keys |> Seq.iter (fun dep -> dep.tryCollect store)
+            let newTraceMap = newTrace |> Seq.map (fun dep -> dep, store.getValue dep) |> IMap.ofSeq
 
             let newVersion =
-                match store.tryGet this with
-                | (true, v) -> (v :?> Versioned<'v>).pushSeq c
+                match store.tryGetValue this with
+                | Some value -> (value :?> Versioned<'v>).pushSeq c
                 | _ -> Versioned<'v>.single (Seq.last c)
                 
-            store.store this newVersion
+            store.store this { value = newVersion; trace = newTraceMap }
 
             _alive <- true
             _valid <- true
@@ -116,15 +106,17 @@ and Brick<'v>(computation : Computation<'v>) as self =
     member this.history (dep : 'd brick) store = 
         tramp {
             let! depV = dep.evaluateT store
+            let trace = store.getTraceOrDefault this
             return 
-                match _trace.get dep with
+                match trace.get dep with
                 | None -> Reset depV
                 | Some (:? Versioned<'d> as v) -> Progress v.tail
                 | _ -> failwith "internal error"
         }
 
-    member this.previous (dep : 'd brick) : 'd option = 
-        match _trace.get dep with
+    member this.previous (dep : 'd brick) (store : Store) : 'd option = 
+        let trace = store.getTraceOrDefault this
+        match trace.get dep with
         | None -> None
         | Some (:? Versioned<'d> as v) -> Some v.head
         | _ -> failwith "internal error"
@@ -211,10 +203,10 @@ type BrickBuilder() =
             }
 
     member this.Bind (PreviousMarker dep, cont: 'd option -> Computation<'v>) : Computation<'v> =
-        fun (b, _ as c) ->
+        fun (b, store as c) ->
             tramp {
                 // note: we don't add the brick to the list of dependencies.
-                let p = b.previous dep
+                let p = b.previous dep store
                 let! contDep, r = cont p c
                 return contDep, r
             }
@@ -346,9 +338,7 @@ type Program<'v>(root : Brick<'v>) =
 
     member this.valueOf (brick : 'x brick) = if brick.valid then brick.value store else None
 
-
-    member this.apply(t: Transaction) = 
-        t()
+    member this.apply(t: Transaction) = t()
 
 type 'v program = Program<'v>
 
