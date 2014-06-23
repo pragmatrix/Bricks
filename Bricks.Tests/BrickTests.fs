@@ -1,13 +1,25 @@
-﻿module BasicTests
+﻿module BrickTests
 
 open NUnit.Framework
 open FsUnit
 
 open Bricks
 
-[<TestFixture>]
-type BrickTests() =
+type BrickTestBase() =
+    let mutable p = new Program<_>(value 0)
+    member this.eval b = p.evaluate b
+    member this.vof b = p.valueOf b
+    
+    [<SetUp>]
+    member this.setup() =
+        p <- new Program<_>(value 0)
 
+[<TestFixture>]
+type BrickTests() as this =
+    inherit BrickTestBase()
+
+    let evaluate b = this.eval b
+ 
     let a = brick { return 3 }
     let b = brick { return 5 }
     let c = brick {
@@ -17,10 +29,11 @@ type BrickTests() =
     }
     let d = brick { return! c }
 
+
     [<Test>]
     member this.simpleEvaluation() =
 
-        let r = c.evaluate()
+        let r = evaluate c
         r |> should equal 15
 
     [<Test>]
@@ -36,7 +49,7 @@ type BrickTests() =
             return ha
         }
 
-        b.evaluate() |> should equal (Reset 0)
+        evaluate b |> should equal (Reset 0)
 
     [<Test>]
     member this.historyDoesNotExistIfValueWasChangedButNotEvaluatedBefore() =
@@ -47,7 +60,7 @@ type BrickTests() =
             return ha
         }
 
-        b.evaluate() |> should equal (Reset 1)
+        evaluate b |> should equal (Reset 1)
 
     [<Test>]
     member this.historyExistsIfValueWasEvaluated() =
@@ -57,15 +70,15 @@ type BrickTests() =
             return ha
         }
 
-        b.evaluate() |> should equal (Reset 0)
+        evaluate b |> should equal (Reset 0)
 
         () |> transaction { write a 1 }
 
-        b.evaluate() |> should equal (Progress [1])
+        evaluate b |> should equal (Progress [1])
 
         () |> transaction { write a 2 }
 
-        b.evaluate() |> should equal (Progress [2])
+        evaluate b |> should equal (Progress [2])
 
 
     [<Test>]
@@ -82,13 +95,13 @@ type BrickTests() =
         }
 
         // need to evaluate b once, so that we get a history
-        b.evaluate() |> ignore
-        c.evaluate() |> ignore
+        evaluate b |> ignore
+        evaluate c |> ignore
         () |> transaction { write a 1 }
-        c.evaluate() |> ignore
+        evaluate c |> ignore
         () |> transaction { write a 2 }
-        c.evaluate() |> ignore
-        b.evaluate() |> should equal (Progress [1;2])
+        evaluate c |> ignore
+        evaluate b |> should equal (Progress [1;2])
 
     [<Test>]
     member this.yieldWithHistory() = 
@@ -104,11 +117,11 @@ type BrickTests() =
             return ha
         }
 
-        b.evaluate() |> should equal (Reset 3)
+        evaluate b |> should equal (Reset 3)
 
         () |> transaction { write source 1 }
 
-        b.evaluate() |> should equal (Progress [1;3])
+        evaluate b |> should equal (Progress [1;3])
 
     [<Test>]
     member this.sharedHistory() = 
@@ -129,17 +142,17 @@ type BrickTests() =
             return ha
         }
 
-        b.evaluate() |> should equal (Reset 3)
-        c.evaluate() |> should equal (Reset 3)
+        evaluate b |> should equal (Reset 3)
+        evaluate c |> should equal (Reset 3)
 
         () |> transaction { write source 1 }
 
-        b.evaluate() |> should equal (Progress [1;3])
+        evaluate b |> should equal (Progress [1;3])
 
         () |> transaction { write source 2 }
 
-        b.evaluate() |> should equal (Progress [2;3])
-        c.evaluate() |> should equal (Progress [1;3;2;3])
+        evaluate b |> should equal (Progress [2;3])
+        evaluate c |> should equal (Progress [1;3;2;3])
 
     [<Test>]
     member this.previous() =
@@ -154,16 +167,16 @@ type BrickTests() =
 
         let none = option<int>.None
 
-        a.evaluate() |> should equal (none, 0)
+        evaluate a |> should equal (none, 0)
 
         () |> transaction { write source 1 }
 
-        a.evaluate() |> should equal (Some 0, 1)
+        evaluate a |> should equal (Some 0, 1)
       
         () |> transaction { write source 2 }
         () |> transaction { write source 3 }
         
-        a.evaluate() |> should equal (Some 1, 3)
+        evaluate a |> should equal (Some 1, 3)
 
     [<Test>]
     member this.previousGetsLostIfSourceIsNotReferencedAnymore() =
@@ -183,25 +196,25 @@ type BrickTests() =
 
         let none = option<int>.None
 
-        a.evaluate() |> should equal (none, Some 0)
+        evaluate a |> should equal (none, Some 0)
 
         () |> transaction { write source 1 }
 
-        a.evaluate() |> should equal (Some 0, Some 1)
+        evaluate a |> should equal (Some 0, Some 1)
 
         () |> transaction { write useSource false }
 
-        a.evaluate() |> should equal (Some 1, none)
+        evaluate a |> should equal (Some 1, none)
 
         // source is not anymore referenced!
         () |> transaction { write source 2 }
 
         // but previous exists in the next run, even though we don't access source animore.
-        a.evaluate() |> should equal (Some 1, none)
+        evaluate a |> should equal (Some 1, none)
 
         // and even though we switch source now on, the previous is lost now
         () |> transaction { write useSource true }
-        a.evaluate() |> should equal (none, Some 2)
+        evaluate a |> should equal (none, Some 2)
 
 
     [<Test>]
@@ -242,7 +255,7 @@ type BrickTests() =
             |> Some
 
 
-        w.evaluate() |> ignore
+        evaluate w |> ignore
         
         
 

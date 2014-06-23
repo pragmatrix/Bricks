@@ -4,10 +4,13 @@ open NUnit.Framework
 open FsUnit
 
 open Bricks
+open BrickTests
 
 [<TestFixture>]
-type TransactionTests() =
+type TransactionTests() as this =
+    inherit BrickTestBase()
 
+    let evaluate b = this.eval b
 
     [<Test>]
     member this.transactionWrite() =
@@ -22,9 +25,9 @@ type TransactionTests() =
             write a 4
         }
         
-        c.evaluate() |> should equal 15
+        evaluate c |> should equal 15
         t()
-        c.evaluate() |> should equal 20
+        evaluate c |> should equal 20
 
     [<Test>]
     member this.continuationGetsInvalidated() = 
@@ -40,9 +43,9 @@ type TransactionTests() =
             write b 5
         }
 
-        c.evaluate() |> should equal 12
+        evaluate c |> should equal 12
         t()
-        c.evaluate() |> should equal 15
+        evaluate c |> should equal 15
 
     [<Test>]
     member this.lastWriteWins() =
@@ -57,9 +60,9 @@ type TransactionTests() =
             write a 4
         }
 
-        c.evaluate() |> should equal 15
+        evaluate c |> should equal 15
         t()
-        c.evaluate() |> should equal 20
+        evaluate c |> should equal 20
 
     [<Test>]
     member this.transactionReset() =
@@ -77,11 +80,11 @@ type TransactionTests() =
             reset a
         }
   
-        c.evaluate() |> should equal 15
+        evaluate c |> should equal 15
         t()
-        c.evaluate() |> should equal 20
+        evaluate c |> should equal 20
         rt()
-        c.evaluate() |> should equal 15
+        evaluate c |> should equal 15
         
     [<Test>]
     member this.aWriteCanNotBeInvalidated() =
@@ -90,8 +93,8 @@ type TransactionTests() =
             let! a = a 
             return a * 2}
 
-        b.evaluate() |> should equal 6
+        evaluate b |> should equal 6
         (transaction { write b 4 })()
-        b.evaluate() |> should equal 4
+        evaluate b |> should equal 4
         (transaction { write a 0 })()
-        b.evaluate() |> should equal 4
+        evaluate b |> should equal 4

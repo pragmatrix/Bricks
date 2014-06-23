@@ -6,8 +6,15 @@ open FsUnit
 open Bricks
 open System
 
+open BrickTests
+
 [<TestFixture>]
-type GCTests() =
+type GCTests() as self =
+
+    inherit BrickTestBase()
+
+    let evaluate b = self.eval b
+    let valueOf b= self.vof b
 
     [<Test>]
     member this.GCInvalidatesOrphanByWrite() =
@@ -23,9 +30,9 @@ type GCTests() =
             return b * 4
         }
 
-        c.evaluate() |> should equal 36
+        evaluate c |> should equal 36
         () |> transaction { write b 2 }
-        c.evaluate() |> should equal 8
+        evaluate c |> should equal 8
         valueOf a |> should equal None
 
     [<Test>]
@@ -42,9 +49,9 @@ type GCTests() =
                 return 0
            }
 
-        c.evaluate() |> should equal 3
+        evaluate c |> should equal 3
         () |> transaction { write useA false }
-        c.evaluate() |> should equal 0
+        evaluate c |> should equal 0
         valueOf a |> should equal None
 
     [<Test>]
@@ -62,9 +69,9 @@ type GCTests() =
             return b * a
         }
 
-        c.evaluate() |> should equal 27
+        evaluate c |> should equal 27
         () |> transaction { write b 2 }
-        c.evaluate() |> should equal 6
+        evaluate c |> should equal 6
         valueOf a |> should equal (Some 3)
 
     [<Test>]

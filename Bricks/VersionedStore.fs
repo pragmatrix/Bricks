@@ -32,12 +32,16 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
     member this.pushSeq values = 
         values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
 
+
+type StoreRecord = Versioned
+
 type Store() = 
-    let _store = Dictionary<obj, Versioned>()
+    let _store = Dictionary<obj, StoreRecord>()
 
-    member this.store brick value = _store.Add(brick, value) 
+    member this.store brick value = _store.[brick] <- value
     member this.remove brick = _store.Remove brick
-
+    member this.tryGet brick = _store.TryGetValue brick
          
 
-    
+type Store with
+    member this.getValue brick = this.tryGet brick |> snd
