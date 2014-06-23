@@ -10,6 +10,7 @@ open System.Linq
 
 open BrickCollections
 open InlineHelper
+open Trampoline
 
 (** BRICK, ENVIRONMENT **)
 
@@ -59,20 +60,19 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
     member this.pushSeq values = 
         values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
 
-
 type internal Trace = Brick list
 
 type History<'v> = 
     | Reset of 'v
     | Progress of 'v seq
 
-type internal ComputationResult<'v> = Trace * 'v list
+type internal ComputationResult<'v> = ITramp<Trace * 'v list>
 
 type internal Computation<'v> = 'v brick -> ComputationResult<'v>
 
 and 't brick = Brick<'t>
 
-and Brick<'v>(computation : Computation<'v>) =
+and Brick<'v>(computation : Computation<'v>) as self =
     
     let mutable _comp = computation
     let mutable _trace : IMap<Brick, Versioned> = IMap.empty
@@ -81,9 +81,39 @@ and Brick<'v>(computation : Computation<'v>) =
     let mutable _valid = false
     let mutable _referrer = ISet.empty
 
+
+    let eval = 
+        let v() = _versioned |> Option.map(fun v -> v.value)
+
+        tramp {
+            if _valid then
+                return v().Value 
+            else
+            let! t, c = _comp self
+            // relink referrers (tbd: do this incrementally)
+            _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer self)
+            t |> Seq.iter (fun dep -> dep.addReferrer self)
+
+            _trace.Keys |> Seq.iter (fun dep -> dep.tryCollect())
+
+            _trace <- t |> Seq.map (fun dep -> dep, dep.versioned) |> IMap.ofSeq
+
+            _versioned <-        
+                match _versioned with
+                | None -> Versioned<'v>.single (Seq.last c)
+                | Some v -> v.pushSeq c
+                |> Some
+        
+            _alive <- true
+            _valid <- true
+            return _versioned.Value.value
+        }
+
+
     member internal this.valid = _valid
     member internal this.value = _versioned |> Option.map(fun v -> v.value) 
     member internal this.instance : 'v option = if _alive then this.value else None
+
 
     interface Brick with
         member this.addReferrer r =
@@ -107,33 +137,20 @@ and Brick<'v>(computation : Computation<'v>) =
 
         member this.versioned = _versioned.Value :> Versioned
 
-    member this.evaluate() : 'v = 
-        if _valid then this.value.Value else
-        let t, c = _comp this
-        // relink referrers (tbd: do this incrementally)
-        _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer this)
-        t |> Seq.iter (fun dep -> dep.addReferrer this)
 
-        _trace.Keys |> Seq.iter (fun dep -> dep.tryCollect())
+    member this.evaluate() = eval.Run()
 
-        _trace <- t |> Seq.map (fun dep -> dep, dep.versioned) |> IMap.ofSeq
+    member this.evaluateT() : ITramp<'v> = eval
 
-        _versioned <-        
-            match _versioned with
-            | None -> Versioned<'v>.single (Seq.last c)
-            | Some v -> v.pushSeq c
-            |> Some
-        
-        _alive <- true
-        _valid <- true
-        _versioned.Value.value
-
-    member this.history (dep : 'd brick) : History<'d> = 
-        let depV = dep.evaluate()
-        match _trace.get dep with
-        | None -> Reset depV
-        | Some (:? Versioned<'d> as v) -> Progress v.tail
-        | _ -> failwith "internal error"
+    member this.history (dep : 'd brick) = 
+        tramp {
+            let! depV = dep.evaluateT()
+            return 
+                match _trace.get dep with
+                | None -> Reset depV
+                | Some (:? Versioned<'d> as v) -> Progress v.tail
+                | _ -> failwith "internal error"
+        }
 
     member this.previous (dep : 'd brick) : 'd option = 
         match _trace.get dep with
@@ -143,7 +160,7 @@ and Brick<'v>(computation : Computation<'v>) =
 
     member this.write v =
         this.invalidate()
-        _comp <- fun _ -> [], [v]
+        _comp <- fun _ -> tramp { return [], [v] }
 
     member this.reset() = 
         this.invalidate()
@@ -168,20 +185,38 @@ let valueOfSelf = SelfValueMarker
 let inline historyOf b = HistoryMarker b
 let inline previousOf b = PreviousMarker b
 
+let private trampSeq (s: seq<ITramp<'v>>) : ITramp<'v list> =
+    let rec ts todo =
+        tramp {
+            match todo with
+            | head::rest ->
+                let! v = head
+                let! r = ts rest
+                return v::r
+            | [] ->
+                return []
+        }
+
+    s |> Seq.toList |> ts
+
 
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
         fun b ->
-            let depValue = dependency.evaluate()
-            let contDep, r = cont depValue b
-            dependency:>Brick :: contDep, r
+            tramp {
+                let! depValue = dependency.evaluateT()
+                let! contDep, r = cont depValue b
+                return dependency:>Brick :: contDep, r
+            }
 
     member this.Bind (dependencies: 'dep brick seq, cont: 'dep seq -> Computation<'next>) : Computation<'next> =
         fun b ->
-            let depValues = dependencies |> Seq.map (fun d -> d.evaluate())
-            let contDep, r = cont depValues b
-            let thisDeps = dependencies |> Seq.cast |> Seq.toList
-            thisDeps @ contDep, r
+            tramp {
+                let! depValues = dependencies |> Seq.map (fun d -> d.evaluateT()) |> trampSeq
+                let! contDep, r = cont depValues b
+                let thisDeps = dependencies |> Seq.cast |> Seq.toList
+                return thisDeps @ contDep, r
+            }
 
     member this.Bind (ManifestMarker instantiator, cont: 'i -> Computation<'i>) : Computation<'i> =
         fun b ->
@@ -198,24 +233,30 @@ type BrickBuilder() =
 
     member this.Bind (HistoryMarker dep, cont: History<'d> -> Computation<'v>) : Computation<'v> =
         fun b ->
-            let h = b.history dep
-            let contDep, r = cont h b
-            dep:>Brick :: contDep, r
+            tramp {
+                let! h = b.history dep
+                let! contDep, r = cont h b
+                return dep:>Brick :: contDep, r
+            }
 
     member this.Bind (PreviousMarker dep, cont: 'd option -> Computation<'v>) : Computation<'v> =
         fun b ->
-            // note: we don't add the brick to the list of dependencies.
-            let p = b.previous dep
-            let contDep, r = cont p b
-            contDep, r
+            tramp {
+                // note: we don't add the brick to the list of dependencies.
+                let p = b.previous dep
+                let! contDep, r = cont p b
+                return contDep, r
+            }
 
-    member this.Return value = fun _ -> [], [value]
+    member this.Return value = fun _ -> tramp { return [], [value] }
     member this.Yield value = this.Return value
 
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
-            let value = brick.evaluate();
-            [brick:>Brick], [value]
+            tramp {
+                let! value = brick.evaluateT();
+                return [brick:>Brick], [value]
+            }
 
     member this.YieldFrom (dep: 'dep brick) = this.ReturnFrom dep
 
@@ -224,25 +265,28 @@ type BrickBuilder() =
     member this.ReturnFrom (h: History<'v>) =
         match h with 
         | Reset v -> this.Return v
-        | Progress p -> fun _ -> [], p |> Seq.toList
+        | Progress p -> fun _ -> tramp { return [], p |> Seq.toList }
 
     member this.YieldFrom (h: History<'v>) =
         match h with 
         | Reset v -> this.Yield v
-        | Progress p -> fun _ -> [], p |> Seq.toList
+        | Progress p -> fun _ -> tramp { return [], p |> Seq.toList }
 
     member this.Combine (first: Computation<'v>, second: Computation<'v>) =
         fun b ->
-            let (fd, fv) = first b
-            let (sd, sv) = second b
-            fd @ sd, fv @ sv
-
+            tramp {
+                let! (fd, fv) = first b
+                let! (sd, sv) = second b
+                return fd @ sd, fv @ sv
+            }
 
     [<CustomOperation("yieldSeq")>]
     member this.Write(nested : Computation<'v>, sequence: 'v seq) =
         fun b ->
-            let (nd, nv) = nested b
-            nd, nv @ (sequence |> Seq.toList)
+            tramp {
+                let! (nd, nv) = nested b
+                return nd, nv @ (sequence |> Seq.toList)
+            }
 
     member this.Run comp = makeBrick comp
 
@@ -267,38 +311,51 @@ type Transaction = unit -> unit
 
 type private Write = unit -> unit
 type private TransactionState = Write list
-type private TransactionM = TransactionState -> TransactionState
+type private TransactionM = TransactionState -> ITramp<TransactionState>
 
 type TransactionBuilder() =
     member this.Bind (brick: 'value brick, cont: 'value -> TransactionM) : TransactionM = 
         fun state ->
-            let value = brick.evaluate()
-            cont value state
+            tramp {
+                let! value = brick.evaluate()
+                let! r = cont value state
+                return r
+            }
 
-    member this.Zero () = id
-    member this.Yield _ = id
+    member this.Zero () = fun f -> tramp { return f }
+    member this.Yield _ = fun f -> tramp { return f }
 
     member this.Run (t : TransactionM): Transaction = 
         fun () -> 
-            let state = t []
-            state |> List.rev |> List.iter (fun w -> w())
+            let t = tramp {
+                let! state = t []
+                return state |> List.rev |> List.iter (fun w -> w())
+            }
+            t.Run()
 
     member this.For(seq : TransactionM, cont: unit -> TransactionM) : TransactionM =
         fun t ->
-            let t = seq t
-            cont() t
+            tramp {
+                let! t = seq t
+                let! r = cont() t
+                return r
+            }
 
     [<CustomOperation("write")>]
     member this.Write(nested : TransactionM, brick: 'v brick, value: 'v) =
         fun t ->
-            let state = nested t
-            (fun () -> brick.write value) :: state
+            tramp {
+                let! state = nested t
+                return (fun () -> brick.write value) :: state
+            }
             
     [<CustomOperation("reset")>]
     member this.Reset(nested: TransactionM, brick : 'v Brick) =
         fun t ->
-            let state = nested t
-            (fun () -> brick.reset()) :: state
+            tramp {
+                let! state = nested t
+                return (fun () -> brick.reset()) :: state
+            }
 
 (* PROGRAM *)
 

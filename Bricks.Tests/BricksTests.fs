@@ -215,25 +215,34 @@ type BrickTests() =
 
         (!x) |> should equal 0
 
-(*
     [<Test>]        
     member this.recursiveEvaluationDoesNotResultInAStackOverflow() = 
+
+        let count = ref 0
+
+        // stack-overflow happens at count 1145, so 10k should be enough
+        let max = 10000
 
         let v : int brick option ref = ref None
 
         let w = brick {
-            let! x = (!v).Value
-            return x * 2
+            count := (!count) + 1
+            if !count = max then
+                return 0
+            else
+                let! x = (!v).Value
+                return x
         }
 
         v := 
             brick {
                 let! y = w
-                return y * 2
+                return y
             } 
             |> Some
 
-*)
+
+        w.evaluate() |> ignore
         
         
 
