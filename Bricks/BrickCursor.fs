@@ -5,30 +5,29 @@ open BrickChannel
 open BricksCore
 open BrickTime
 
-(*
 
-type ListCursor<'e> = { source: 'e IList.change channel; index: int brick }
+type cursor = int brick
 
-type 'e lcursor = ListCursor<'e>
-
-let cursor source index = 
+let cursor (source : IList.change<'e> brick) : cursor = 
     
-    let state = ref index
-
-    let processor change =
-        let index = !state
+    let processor index (change, _) =
         match change with
-        | IList.Inserted(i, _) -> if i <= index then state := index + 1
-        | IList.Removed i -> if i < index then state := index - 1
-        | IList.Reset _ -> state := 0
+        | IList.Inserted(i, _) -> if i <= index then index + 1 else index
+        | IList.Removed i -> if i < index then index - 1 else index
+        | IList.Reset _ -> 0
 
-    fun _ changes ->
-        changes |> Seq.iter processor
-        !state
+    brick {
+        let! s = valueOfSelf
+        let! h = historyOf source
 
-    |> Channel.makeProcSeq source !state 
-    |> fun b -> (source, b)
+        match h with
+        | Reset _ -> 
+            return 0
+        | Progress changes -> 
+            let index = s.Value
+            let index = Seq.fold processor index changes
+            return index
+    }
 
-*)
 
     
