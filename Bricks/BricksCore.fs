@@ -14,6 +14,16 @@ open Trampoline
 
 (** BRICK, ENVIRONMENT **)
 
+[<CustomEquality>][<CustomComparison>]
+type Beacon = { mutable valid: bool }
+    with
+        interface IComparable with
+            member this.CompareTo other =
+                this.GetHashCode().CompareTo (other.GetHashCode())
+
+        override this.Equals(other) =
+            Object.ReferenceEquals(this, other)
+
 type Versioned = interface
     end
 
@@ -23,10 +33,13 @@ and Brick =
     abstract member tryCollect : unit -> unit
     abstract member invalidate : unit -> unit
     abstract member versioned : Versioned with get
+    abstract member beacon: Beacon Set
 
 type History<'v> = 
     | Reset of 'v
     | Progress of 'v seq
+
+
 
 type Brick<'v> = 
     inherit Brick
@@ -80,6 +93,7 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
     member this.pushSeq values = 
         values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
 
+
 type internal Trace = Brick list
 
 type internal ComputationResult<'v> = ITramp<Trace * 'v list>
@@ -96,6 +110,7 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
     let mutable _alive = false
     let mutable _valid = false
     let mutable _referrer = ISet.empty
+    let mutable _beacon = Set.empty
 
     let eval = 
         tramp {
@@ -110,6 +125,7 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
             _trace.Keys |> Seq.iter (fun dep -> dep.tryCollect())
 
             _trace <- t |> Seq.map (fun dep -> dep, dep.versioned) |> IMap.ofSeq
+            _beacon <- t |> Seq.map (fun dep -> dep.beacon) |> Set.unionMany 
 
             _versioned <-        
                 match _versioned with
@@ -165,19 +181,23 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
     
         member this.evaluateT() : ITramp<'v> = eval
 
+        member this.beacon = _beacon
+
     member this.invalidate() =
         (this :> Brick).invalidate()    
 
 type MutableBrick<'v>(initial: 'v) =
 
     let mutable _versioned : Versioned<'v> option = None
-    let mutable _valid = false
     let mutable _referrer = ISet.empty
     let mutable _current = initial
 
+    let beacon = { valid = false }
+    let beaconSet = Set.singleton beacon
+
     let eval = 
         tramp {
-            if _valid then
+            if beacon.valid then
                 return _versioned.Value.value 
             else
             _versioned <-        
@@ -186,7 +206,7 @@ type MutableBrick<'v>(initial: 'v) =
                 | Some v -> v.push _current
                 |> Some
         
-            _valid <- true
+            beacon.valid <- true
             return _versioned.Value.value
         }
 
@@ -198,17 +218,17 @@ type MutableBrick<'v>(initial: 'v) =
             _referrer <- _referrer.Remove r
 
         member this.invalidate() =
-            if _valid then
-                _valid <- false
+            if beacon.valid then
+                beacon.valid <- false
                 _referrer |> Seq.iter (fun b -> b.invalidate())
 
         member this.tryCollect() =
-            if (_valid && _referrer.Count = 0) then
+            if (beacon.valid && _referrer.Count = 0) then
                 this.invalidate()
 
         member this.versioned = _versioned.Value :> Versioned
         member this.value = _versioned |> Option.map(fun v -> v.value) 
-        member this.valid = _valid
+        member this.valid = beacon.valid
 
         member this.history (_ : 'd brick) = 
             failwith "internal error"
@@ -225,6 +245,8 @@ type MutableBrick<'v>(initial: 'v) =
         member this.reset() = 
             this.invalidate()
             _current <- initial
+
+        member this.beacon = beaconSet
 
     member this.invalidate() =
         (this :> Brick).invalidate()    
