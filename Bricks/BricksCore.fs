@@ -24,22 +24,25 @@ type Beacon = { mutable valid: bool }
         override this.Equals(other) =
             Object.ReferenceEquals(this, other)
 
+        member this.invalidate() = this.valid <- false
+
+        static member create = { valid = false }
+
 type Versioned = interface
     end
 
+type BeaconNode = 
+    | Mutable of Beacon
+    | Computed of Beacon * BeaconNode list
+
 and Brick =
-    abstract member addReferrer : Brick -> unit
-    abstract member removeReferrer : Brick -> unit
-    abstract member tryCollect : unit -> unit
     abstract member invalidate : unit -> unit
     abstract member versioned : Versioned with get
-    abstract member beacon: Beacon Set
+    abstract member node : BeaconNode
 
 type History<'v> = 
     | Reset of 'v
     | Progress of 'v seq
-
-
 
 type Brick<'v> = 
     inherit Brick
@@ -54,15 +57,29 @@ type Mutable<'v> =
     abstract member write: 'v -> unit
     abstract member reset: unit -> unit
 
+let updateNode node = 
+
+    let rec un node notify = 
+        match node with
+        | Mutable b -> if not b.valid then notify()
+        | Computed (b, deps) ->
+        if not b.valid then notify() 
+        else
+        let n() =
+            if (b.valid) then
+                b.valid <- false
+                notify()
+
+        deps |> List.iter (fun d -> un d n)
+
+    un node id
+
 [<AutoOpen>]
 module BrickExtensions =
-    type Brick with
-        member this.removeReferrerAndTryCollect referrer =
-            this.removeReferrer referrer
-            this.tryCollect()
 
     type Brick<'v> with
         member this.evaluate() =
+            updateNode this.node
             this.evaluateT().Run()
 
 
@@ -104,64 +121,43 @@ and 't brick = Brick<'t>
 
 and ComputedBrick<'v>(computation : Computation<'v>) as self =
     
-    let mutable _comp = computation
+    let beacon = Beacon.create
+    let mutable _node = Computed (beacon, [])
     let mutable _trace : IMap<Brick, Versioned> = IMap.empty
     let mutable _versioned : Versioned<'v> option = None
-    let mutable _alive = false
-    let mutable _valid = false
-    let mutable _referrer = ISet.empty
-    let mutable _beacon = Set.empty
 
     let eval = 
         tramp {
-            if _valid then
+            if beacon.valid then
                 return _versioned.Value.value 
             else
-            let! t, c = _comp self
-            // relink referrers (tbd: do this incrementally)
-            _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrer self)
-            t |> Seq.iter (fun dep -> dep.addReferrer self)
-
-            _trace.Keys |> Seq.iter (fun dep -> dep.tryCollect())
-
+            let! t, c = computation self
+            // tbd: do this in one go (return a dep, versioned and node tuple)
             _trace <- t |> Seq.map (fun dep -> dep, dep.versioned) |> IMap.ofSeq
-            _beacon <- t |> Seq.map (fun dep -> dep.beacon) |> Set.unionMany 
+            let depNodes = t|> Seq.map (fun dep -> dep.node) |> Seq.toList
+
+            _node <- Computed (beacon, depNodes)
 
             _versioned <-        
                 match _versioned with
                 | None -> Versioned<'v>.single (Seq.last c)
                 | Some v -> v.pushSeq c
                 |> Some
-        
-            _alive <- true
-            _valid <- true
+
+            beacon.valid <- true
             return _versioned.Value.value
         }
 
-
-    member internal this.valid = _valid
-
+    member internal this.valid = beacon.valid
 
     interface Brick<'v> with
-        member this.addReferrer r =
-            _referrer <- _referrer.Add r
-
-        member this.removeReferrer r =
-            _referrer <- _referrer.Remove r
 
         member this.invalidate() =
-            if _valid then
-                _valid <- false
-                _referrer |> Seq.iter (fun b -> b.invalidate())
-
-        member this.tryCollect() =
-            if (_valid && _referrer.Count = 0) then
-                this.invalidate()
-                _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrerAndTryCollect this)
+            beacon.valid <- false
 
         member this.versioned = _versioned.Value :> Versioned
         member this.value = _versioned |> Option.map(fun v -> v.value) 
-        member this.valid = _valid
+        member this.valid = this.valid
 
         member this.history (dep : 'd brick) = 
             tramp {
@@ -181,10 +177,7 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
     
         member this.evaluateT() : ITramp<'v> = eval
 
-        member this.beacon = _beacon
-
-    member this.invalidate() =
-        (this :> Brick).invalidate()    
+        member this.node = _node
 
 type MutableBrick<'v>(initial: 'v) =
 
@@ -192,8 +185,8 @@ type MutableBrick<'v>(initial: 'v) =
     let mutable _referrer = ISet.empty
     let mutable _current = initial
 
-    let beacon = { valid = false }
-    let beaconSet = Set.singleton beacon
+    let beacon = Beacon.create
+    let node = Mutable beacon
 
     let eval = 
         tramp {
@@ -211,20 +204,9 @@ type MutableBrick<'v>(initial: 'v) =
         }
 
     interface Mutable<'v> with
-        member this.addReferrer r =
-            _referrer <- _referrer.Add r
-
-        member this.removeReferrer r =
-            _referrer <- _referrer.Remove r
 
         member this.invalidate() =
-            if beacon.valid then
-                beacon.valid <- false
-                _referrer |> Seq.iter (fun b -> b.invalidate())
-
-        member this.tryCollect() =
-            if (beacon.valid && _referrer.Count = 0) then
-                this.invalidate()
+            beacon.valid <- false
 
         member this.versioned = _versioned.Value :> Versioned
         member this.value = _versioned |> Option.map(fun v -> v.value) 
@@ -239,17 +221,14 @@ type MutableBrick<'v>(initial: 'v) =
         member this.evaluateT() : ITramp<'v> = eval
 
         member this.write v =
-            this.invalidate()
+            beacon.invalidate()
             _current <- v
 
-        member this.reset() = 
-            this.invalidate()
+        member this.reset() =
+            beacon.invalidate() 
             _current <- initial
 
-        member this.beacon = beaconSet
-
-    member this.invalidate() =
-        (this :> Brick).invalidate()    
+        member this.node = node
 
 type 't bricks = seq<'t brick>
 
@@ -322,7 +301,7 @@ type BrickBuilder() =
 
     member this.Return value = fun _ -> tramp { return [], [value] }
     member this.Yield value = this.Return value
-
+    
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
             tramp {
@@ -430,12 +409,10 @@ type TransactionBuilder() =
 (* PROGRAM *)
 
 type Program<'v>(brick : Brick<'v>) =
-
-    let collect() = (brick :> Brick).tryCollect()
-
-    interface IDisposable with
-        member i.Dispose() = collect()
             
+    interface IDisposable with
+        member this.Dispose() = ()
+
     member this.run() = brick.evaluate()
 
     member this.apply(t: Transaction) = 

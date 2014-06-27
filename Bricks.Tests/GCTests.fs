@@ -32,7 +32,7 @@ type GCTests() =
 *)
 
     [<Test>]
-    member this.GCInvalidatesOrphanByNotEvaluating() =
+    member this.GCDoesNotInvalidateOrphanByNotEvaluating() =
         let a = value 3
 
         let useA = value true
@@ -48,7 +48,7 @@ type GCTests() =
         c.evaluate() |> should equal 3
         () |> transaction { write useA false }
         c.evaluate() |> should equal 0
-        valueOf a |> should equal None
+        valueOf a |> should equal (Some 3)
 
 (*
     [<Test>]

@@ -69,7 +69,7 @@ type BrickTests() =
 
 
     [<Test>]
-    member this.historyWithThirdParty() =
+    member this.historyWithThirdPartyEvaluatingSource() =
         let a = value 0
         let b = brick {
             let! ha = historyOf a
@@ -81,14 +81,18 @@ type BrickTests() =
             return a
         }
 
+        let root = brick {
+            let! b = b
+            let! c = c
+            return (b, c)
+        }
+
         // need to evaluate b once, so that we get a history
-        b.evaluate() |> ignore
-        c.evaluate() |> ignore
+        root.evaluate() |> should equal (Reset 0, 0)
         () |> transaction { write a 1 }
-        c.evaluate() |> ignore
+        root.evaluate() |> should equal (Progress [1], 1)
         () |> transaction { write a 2 }
-        c.evaluate() |> ignore
-        b.evaluate() |> should equal (Progress [1;2])
+        root.evaluate() |> should equal (Progress [2], 2)
 
     [<Test>]
     member this.yieldWithHistory() = 
@@ -99,19 +103,36 @@ type BrickTests() =
             yield 3
         }
 
-        let b = brick {
+        let root = brick {
             let! ha = historyOf a
             return ha
         }
 
-        b.evaluate() |> should equal (Reset 3)
+        root.evaluate() |> should equal (Reset 3)
 
         () |> transaction { write source 1 }
 
-        b.evaluate() |> should equal (Progress [1;3])
+        root.evaluate() |> should equal (Progress [1;3])
+
 
     [<Test>]
-    member this.sharedHistory() = 
+    member this.firstTimeHistoryEvaluationReturnsResetLatest() = 
+        let source = value 0
+
+        let a = brick {
+            yield! source
+            yield 3
+        }
+
+        let root = brick {
+            let! ha = historyOf a
+            return ha
+        }
+
+        root.evaluate() |> should equal (Reset 3)
+
+    [<Test>]
+    member this.conditionalSharedHistoryCatchesUp() = 
         let source = value 0
 
         let a = brick {
@@ -124,22 +145,52 @@ type BrickTests() =
             return ha
         }
 
-         let c = brick {
+        let c = brick {
             let! ha = historyOf a
             return ha
         }
 
-        b.evaluate() |> should equal (Reset 3)
-        c.evaluate() |> should equal (Reset 3)
 
-        () |> transaction { write source 1 }
+        let evalC = value true
 
-        b.evaluate() |> should equal (Progress [1;3])
+        let root = brick {
+            let! b = b
+            let! evalC = evalC
+            if (not evalC) then
+                return (b, None)
+            else
+            let! c = c
+            return (b, Some c)
+        }
 
-        () |> transaction { write source 2 }
+        root.evaluate() |> should equal (Reset 3, Some (Reset 3))
+        
+        () |> transaction { 
+            write source 1 
+        }
 
-        b.evaluate() |> should equal (Progress [2;3])
-        c.evaluate() |> should equal (Progress [1;3;2;3])
+        root.evaluate() |> should equal (Progress [1;3], Some (Progress[1;3]))
+
+        () |> transaction {
+            write source 2 
+            write evalC false
+        }
+
+        let none = Option<History<int>>.None
+
+        let r = root.evaluate() 
+        printfn "%A" r
+        r |> should equal (Progress [2;3], none)
+
+        () |> transaction {
+            write evalC true
+        }
+
+        let r = root.evaluate()
+        printfn "%A" r
+        // the duplicated return of b's Progress [2;3] points to a problem here: historic values
+        // should not escape their brick (introduce an elm like foldp?)
+        r |> should equal (Progress [2;3], Some (Progress[2;3]))
 
     [<Test>]
     member this.previous() =
