@@ -12,7 +12,7 @@ type TransactionTests() =
     [<Test>]
     member this.transactionWrite() =
         
-        let a = brick { return 3 }
+        let a = value 3
         let c = brick {
             let! a = a
             return a * 5
@@ -28,8 +28,8 @@ type TransactionTests() =
 
     [<Test>]
     member this.continuationGetsInvalidated() = 
-        let a = brick { return 3 }
-        let b = brick { return 4 }
+        let a = value 3
+        let b = value 4
         let c = brick {
             let! a = a
             let! b = b
@@ -46,7 +46,7 @@ type TransactionTests() =
 
     [<Test>]
     member this.lastWriteWins() =
-        let a = brick { return 3 }
+        let a = value 3
         let c = brick {
             let! a = a
             return a * 5
@@ -63,7 +63,7 @@ type TransactionTests() =
 
     [<Test>]
     member this.transactionReset() =
-        let a = brick { return 3 }
+        let a = value 3
         let c = brick {
             let! a = a
             return a * 5
@@ -82,7 +82,8 @@ type TransactionTests() =
         c.evaluate() |> should equal 20
         rt()
         c.evaluate() |> should equal 15
-        
+
+(*        
     [<Test>]
     member this.aWriteCanNotBeInvalidated() =
         let a = brick { return 3 }
@@ -95,3 +96,4 @@ type TransactionTests() =
         b.evaluate() |> should equal 4
         (transaction { write a 0 })()
         b.evaluate() |> should equal 4
+*)

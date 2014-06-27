@@ -13,6 +13,8 @@ type Instance() =
     interface IDisposable with
         member this.Dispose() = this.Disposed <- true
 
+(*
+
 [<TestFixture>]
 type LifetimeTests() =
 
@@ -67,3 +69,4 @@ type LifetimeTests() =
         instance.Disposed |> should equal false
         instance.Value |> should equal 2
 
+*)

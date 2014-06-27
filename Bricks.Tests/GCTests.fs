@@ -9,6 +9,8 @@ open System
 [<TestFixture>]
 type GCTests() =
 
+
+(*
     [<Test>]
     member this.GCInvalidatesOrphanByWrite() =
         let a = brick { return 3 }
@@ -27,12 +29,13 @@ type GCTests() =
         () |> transaction { write b 2 }
         c.evaluate() |> should equal 8
         valueOf a |> should equal None
+*)
 
     [<Test>]
     member this.GCInvalidatesOrphanByNotEvaluating() =
-        let a = brick { return 3 }
+        let a = value 3
 
-        let useA = brick { return true }
+        let useA = value true
 
         let c = brick {
             let! useA = useA
@@ -47,6 +50,7 @@ type GCTests() =
         c.evaluate() |> should equal 0
         valueOf a |> should equal None
 
+(*
     [<Test>]
     member this.GCDoesNotInvalidateSharedDependency() =
         let a = brick { return 3 }
@@ -66,6 +70,7 @@ type GCTests() =
         () |> transaction { write b 2 }
         c.evaluate() |> should equal 6
         valueOf a |> should equal (Some 3)
+*)
 
     [<Test>]
     member this.NativeGCCollectsTemporarilyUsedBrick() = 
@@ -105,7 +110,7 @@ type GCTests() =
 
         let runProgram() = 
             let tmps = [| newTmp(0); newTmp(1) |]
-            let current = brick { return 0; }
+            let current = value 0
             let b = brick {
                 let! c = current
                 let! tmp = tmps.[c]

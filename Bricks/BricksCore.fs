@@ -24,12 +24,34 @@ and Brick =
     abstract member invalidate : unit -> unit
     abstract member versioned : Versioned with get
 
+type History<'v> = 
+    | Reset of 'v
+    | Progress of 'v seq
+
+type Brick<'v> = 
+    inherit Brick
+    abstract member evaluateT: unit -> ITramp<'v>
+    abstract member value: 'v option
+    abstract member history: Brick<'d> -> ITramp<History<'d>>
+    abstract member previous: Brick<'d> -> 'd option
+    abstract member valid: bool
+
+type Mutable<'v> = 
+    inherit Brick<'v>
+    abstract member write: 'v -> unit
+    abstract member reset: unit -> unit
+
 [<AutoOpen>]
 module BrickExtensions =
     type Brick with
         member this.removeReferrerAndTryCollect referrer =
             this.removeReferrer referrer
             this.tryCollect()
+
+    type Brick<'v> with
+        member this.evaluate() =
+            this.evaluateT().Run()
+
 
 type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
 
@@ -60,17 +82,13 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
 
 type internal Trace = Brick list
 
-type History<'v> = 
-    | Reset of 'v
-    | Progress of 'v seq
-
 type internal ComputationResult<'v> = ITramp<Trace * 'v list>
 
 type internal Computation<'v> = 'v brick -> ComputationResult<'v>
 
 and 't brick = Brick<'t>
 
-and Brick<'v>(computation : Computation<'v>) as self =
+and ComputedBrick<'v>(computation : Computation<'v>) as self =
     
     let mutable _comp = computation
     let mutable _trace : IMap<Brick, Versioned> = IMap.empty
@@ -79,13 +97,10 @@ and Brick<'v>(computation : Computation<'v>) as self =
     let mutable _valid = false
     let mutable _referrer = ISet.empty
 
-
     let eval = 
-        let v() = _versioned |> Option.map(fun v -> v.value)
-
         tramp {
             if _valid then
-                return v().Value 
+                return _versioned.Value.value 
             else
             let! t, c = _comp self
             // relink referrers (tbd: do this incrementally)
@@ -109,11 +124,9 @@ and Brick<'v>(computation : Computation<'v>) as self =
 
 
     member internal this.valid = _valid
-    member internal this.value = _versioned |> Option.map(fun v -> v.value) 
-    member internal this.instance : 'v option = if _alive then this.value else None
 
 
-    interface Brick with
+    interface Brick<'v> with
         member this.addReferrer r =
             _referrer <- _referrer.Add r
 
@@ -128,57 +141,104 @@ and Brick<'v>(computation : Computation<'v>) as self =
         member this.tryCollect() =
             if (_valid && _referrer.Count = 0) then
                 this.invalidate()
-                match box this.value.Value with
-                | :? IDisposable as d -> d.Dispose()
-                | _ -> ()
                 _trace.Keys |> Seq.iter (fun dep -> dep.removeReferrerAndTryCollect this)
 
         member this.versioned = _versioned.Value :> Versioned
+        member this.value = _versioned |> Option.map(fun v -> v.value) 
+        member this.valid = _valid
 
+        member this.history (dep : 'd brick) = 
+            tramp {
+                let! depV = dep.evaluateT()
+                return 
+                    match _trace.get dep with
+                    | None -> Reset depV
+                    | Some (:? Versioned<'d> as v) -> Progress v.tail
+                    | _ -> failwith "internal error"
+            }
 
-    member this.evaluate() = eval.Run()
+        member this.previous (dep : 'd brick) : 'd option = 
+            match _trace.get dep with
+            | None -> None
+            | Some (:? Versioned<'d> as v) -> Some v.head
+            | _ -> failwith "internal error"
+    
+        member this.evaluateT() : ITramp<'v> = eval
 
-    member this.evaluateT() : ITramp<'v> = eval
+    member this.invalidate() =
+        (this :> Brick).invalidate()    
 
-    member this.history (dep : 'd brick) = 
+type MutableBrick<'v>(initial: 'v) =
+
+    let mutable _versioned : Versioned<'v> option = None
+    let mutable _valid = false
+    let mutable _referrer = ISet.empty
+    let mutable _current = initial
+
+    let eval = 
         tramp {
-            let! depV = dep.evaluateT()
-            return 
-                match _trace.get dep with
-                | None -> Reset depV
-                | Some (:? Versioned<'d> as v) -> Progress v.tail
-                | _ -> failwith "internal error"
+            if _valid then
+                return _versioned.Value.value 
+            else
+            _versioned <-        
+                match _versioned with
+                | None -> Versioned<'v>.single (_current)
+                | Some v -> v.push _current
+                |> Some
+        
+            _valid <- true
+            return _versioned.Value.value
         }
 
-    member this.previous (dep : 'd brick) : 'd option = 
-        match _trace.get dep with
-        | None -> None
-        | Some (:? Versioned<'d> as v) -> Some v.head
-        | _ -> failwith "internal error"
+    interface Mutable<'v> with
+        member this.addReferrer r =
+            _referrer <- _referrer.Add r
 
-    member this.write v =
-        this.invalidate()
-        _comp <- fun _ -> tramp { return [], [v] }
+        member this.removeReferrer r =
+            _referrer <- _referrer.Remove r
 
-    member this.reset() = 
-        this.invalidate()
-        _comp <- computation
+        member this.invalidate() =
+            if _valid then
+                _valid <- false
+                _referrer |> Seq.iter (fun b -> b.invalidate())
+
+        member this.tryCollect() =
+            if (_valid && _referrer.Count = 0) then
+                this.invalidate()
+
+        member this.versioned = _versioned.Value :> Versioned
+        member this.value = _versioned |> Option.map(fun v -> v.value) 
+        member this.valid = _valid
+
+        member this.history (_ : 'd brick) = 
+            failwith "internal error"
+
+        member this.previous (_ : 'd brick) : 'd option = 
+            failwith "internal error"
+
+        member this.evaluateT() : ITramp<'v> = eval
+
+        member this.write v =
+            this.invalidate()
+            _current <- v
+
+        member this.reset() = 
+            this.invalidate()
+            _current <- initial
 
     member this.invalidate() =
         (this :> Brick).invalidate()    
 
 type 't bricks = seq<'t brick>
 
-let internal makeBrick<'v> f = Brick<'v>(f)
+let internal makeBrick<'v> f = ComputedBrick<'v>(f) :> Brick<'v>
 
 // i want these in a module named Brick
 
-type ManifestMarker<'a> = ManifestMarker of (unit -> 'a)
 type SelfValueMarker = SelfValueMarker
 type HistoryMarker<'v> = HistoryMarker of Brick<'v>
 type PreviousMarker<'v> = PreviousMarker of Brick<'v>
 
-let inline manifest f = ManifestMarker f
 let valueOfSelf = SelfValueMarker
 let inline historyOf b = HistoryMarker b
 let inline previousOf b = PreviousMarker b
@@ -215,14 +275,6 @@ type BrickBuilder() =
                 let thisDeps = dependencies |> Seq.cast |> Seq.toList
                 return thisDeps @ contDep, r
             }
-
-    member this.Bind (ManifestMarker instantiator, cont: 'i -> Computation<'i>) : Computation<'i> =
-        fun b ->
-            let i = 
-                match b.instance with
-                | Some i -> i
-                | None -> instantiator()
-            cont i b
 
     member this.Bind (SelfValueMarker, cont: 'v option -> Computation<'v>) : Computation<'v> =
         fun b ->
@@ -313,7 +365,7 @@ type TransactionBuilder() =
     member this.Bind (brick: 'value brick, cont: 'value -> TransactionM) : TransactionM = 
         fun state ->
             tramp {
-                let! value = brick.evaluate()
+                let! value = brick.evaluateT()
                 let! r = cont value state
                 return r
             }
@@ -338,7 +390,7 @@ type TransactionBuilder() =
             }
 
     [<CustomOperation("write")>]
-    member this.Write(nested : TransactionM, brick: 'v brick, value: 'v) =
+    member this.Write(nested : TransactionM, brick: Mutable<'v>, value: 'v) =
         fun t ->
             tramp {
                 let! state = nested t
@@ -346,7 +398,7 @@ type TransactionBuilder() =
             }
             
     [<CustomOperation("reset")>]
-    member this.Reset(nested: TransactionM, brick : 'v Brick) =
+    member this.Reset(nested: TransactionM, brick : Mutable<'v>) =
         fun t ->
             tramp {
                 let! state = nested t
@@ -373,10 +425,7 @@ type 'v program = Program<'v>
 
 /// Value brick (tbd: remove in favor of lift?).
 
-let value (v : 'v) : 'v brick =
-    brick {
-        return v
-    }
+let value (v : 'v) : Mutable<'v> = MutableBrick<'v>(v) :> _
 
 /// A conversion brick applies a function to a brick.
 /// could be a map override?
@@ -400,7 +449,7 @@ let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
 
 type Lifter = Lifter with
    
-    static member instance (_:Lifter, v:'v, _:'v brick) : unit -> 'v brick = fun () -> value v
+    static member instance (_:Lifter, v:'v, _:Mutable<'v>) : unit -> Mutable<'v> = fun () -> value v
     static member instance (_:Lifter, f: 's -> 't, _:'s brick -> 't brick) = fun () -> convert f
     static member instance (_:Lifter, f: 's -> 'e -> 's, _:'s brick -> 'e brick -> 's brick) =
         fun () ->
