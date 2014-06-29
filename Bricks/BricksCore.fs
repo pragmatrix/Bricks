@@ -152,7 +152,7 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
                 |> Seq.map (fun dep -> dep, dep.versioned) 
                 |> IMap.ofSeq
 
-            let newest =
+            let currentTick =
                 if t = [] then CurrentTick else
                 t 
                 |> Seq.map (fun dep -> dep.versioned.tick) 
@@ -167,8 +167,8 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
 
             _versioned <-        
                 match _versioned with
-                | None -> Versioned<'v>.single (newest, (Seq.last c))
-                | Some v -> v.pushSeq (c |> Seq.map (fun c -> (newest, c)))
+                | None -> Versioned<'v>.single (currentTick, (Seq.last c))
+                | Some v -> v.pushSeq (c |> Seq.map (fun c -> (currentTick, c)))
                 |> Some
 
             beacon.valid <- true
