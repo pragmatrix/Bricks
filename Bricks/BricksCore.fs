@@ -14,6 +14,8 @@ open Trampoline
 
 (** BRICK, ENVIRONMENT **)
 
+#nowarn "0346" // for Beacon.GetHashCode()
+
 [<CustomEquality>][<CustomComparison>]
 type Beacon = { mutable valid: bool }
     with
@@ -28,7 +30,10 @@ type Beacon = { mutable valid: bool }
 
         static member create = { valid = false }
 
+type Tick = int64
+
 type Versioned = interface
+        abstract member tick : Tick
     end
 
 type BeaconNode = 
@@ -54,8 +59,8 @@ type Brick<'v> =
 
 type Mutable<'v> = 
     inherit Brick<'v>
-    abstract member write: 'v -> unit
-    abstract member reset: unit -> unit
+    abstract member write: Tick -> 'v -> unit
+    abstract member reset: Tick -> unit
 
 let updateNode node = 
 
@@ -82,21 +87,22 @@ module BrickExtensions =
             updateNode this.node
             this.evaluateT().Run()
 
+type Versioned<'v> = { tick: Tick; value: 'v; mutable next: Versioned<'v> option } with
 
-type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
+    interface Versioned with
+        override this.tick = this.tick
 
-    interface Versioned
+    static member single (tick: Tick, value: 'v) = { tick = tick; value = value; next = None }
 
-    static member single (value: 'v) = { value = value; next = None }
-
+(*
     static member ofSeq (s: 'v seq) =
         let h = Versioned.single (Seq.head s)
         h.pushSeq (Seq.skip 1 s) |> ignore
         h
-
-    member this.push (value: 'v) =
+*)
+    member this.push (time: Tick, value: 'v) =
         assert(this.next.IsNone)
-        let n = Versioned<'v>.single value
+        let n = Versioned<'v>.single (time, value)
         this.next <- Some n
         n
 
@@ -110,6 +116,14 @@ type Versioned<'v> = { value: 'v; mutable next: Versioned<'v> option } with
     member this.pushSeq values = 
         values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
 
+(* Global Tick counter *)
+
+let mutable private CurrentTick = 0L
+
+let internal newTick() = 
+    let newT = CurrentTick + 1L
+    CurrentTick <- newT
+    newT
 
 type internal Trace = Brick list
 
@@ -132,16 +146,29 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
                 return _versioned.Value.value 
             else
             let! t, c = computation self
-            // tbd: do this in one go (return a dep, versioned and node tuple)
-            _trace <- t |> Seq.map (fun dep -> dep, dep.versioned) |> IMap.ofSeq
-            let depNodes = t|> Seq.map (fun dep -> dep.node) |> Seq.toList
+            // tbd: combine the following queries
+            _trace <- 
+                t
+                |> Seq.map (fun dep -> dep, dep.versioned) 
+                |> IMap.ofSeq
+
+            let newest =
+                if t = [] then CurrentTick else
+                t 
+                |> Seq.map (fun dep -> dep.versioned.tick) 
+                |> Seq.max
+
+            let depNodes = 
+                t 
+                |> Seq.map (fun dep -> dep.node) 
+                |> Seq.toList
 
             _node <- Computed (beacon, depNodes)
 
             _versioned <-        
                 match _versioned with
-                | None -> Versioned<'v>.single (Seq.last c)
-                | Some v -> v.pushSeq c
+                | None -> Versioned<'v>.single (newest, (Seq.last c))
+                | Some v -> v.pushSeq (c |> Seq.map (fun c -> (newest, c)))
                 |> Some
 
             beacon.valid <- true
@@ -179,11 +206,11 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
 
         member this.node = _node
 
-type MutableBrick<'v>(initial: 'v) =
+type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
     let mutable _versioned : Versioned<'v> option = None
     let mutable _referrer = ISet.empty
-    let mutable _current = initial
+    let mutable _current = tick, initial
 
     let beacon = Beacon.create
     let node = Mutable beacon
@@ -220,13 +247,13 @@ type MutableBrick<'v>(initial: 'v) =
 
         member this.evaluateT() : ITramp<'v> = eval
 
-        member this.write v =
+        member this.write tick v =
             beacon.invalidate()
-            _current <- v
+            _current <- tick, v
 
-        member this.reset() =
+        member this.reset tick =
             beacon.invalidate() 
-            _current <- initial
+            _current <- tick, initial
 
         member this.node = node
 
@@ -358,7 +385,7 @@ let brick = new BrickBuilder()
 
 type Transaction = unit -> unit
 
-type private Write = unit -> unit
+type private Write = Tick -> unit
 type private TransactionState = Write list
 type private TransactionM = TransactionState -> ITramp<TransactionState>
 
@@ -378,7 +405,8 @@ type TransactionBuilder() =
         fun () -> 
             let t = tramp {
                 let! state = t []
-                return state |> List.rev |> List.iter (fun w -> w())
+                let tick = newTick()
+                return state |> List.rev |> List.iter (fun w -> w tick)
             }
             t.Run()
 
@@ -395,7 +423,7 @@ type TransactionBuilder() =
         fun t ->
             tramp {
                 let! state = nested t
-                return (fun () -> brick.write value) :: state
+                return (fun time -> brick.write time value) :: state
             }
             
     [<CustomOperation("reset")>]
@@ -403,53 +431,38 @@ type TransactionBuilder() =
         fun t ->
             tramp {
                 let! state = nested t
-                return (fun () -> brick.reset()) :: state
+                return (fun time -> brick.reset time) :: state
             }
 
 (* PROGRAM *)
 
-type Program<'v>(brick : Brick<'v>) =
+type Program<'v>(root : Brick<'v>) =
             
     interface IDisposable with
         member this.Dispose() = ()
 
-    member this.run() = brick.evaluate()
+    member this.run() = root.evaluate()
 
-    member this.apply(t: Transaction) = 
-        t()
+    member this.apply(t: Transaction) = t()
 
 type 'v program = Program<'v>
 
-(** BASIC COMBINATORS **)
-
-/// Value brick (tbd: remove in favor of lift?).
-
-let value (v : 'v) : Mutable<'v> = MutableBrick<'v>(v) :> _
-
-/// A conversion brick applies a function to a brick.
-/// could be a map override?
-
-let convert (c: 's -> 't) (source: 's brick) : 't brick =
-    brick {
-        let! s = source
-        return c s
-    }
-
-/// combine two bricks by a funcion.
-
-let combine (c: 'a -> 'b -> 'c) (a: 'a brick) (b: 'b brick) : 'c brick =
-    brick {
-        let! a = a
-        let! b = b
-        return c a b
-    }
-
-/// lift
+(** LIFT **)
 
 type Lifter = Lifter with
    
-    static member instance (_:Lifter, v:'v, _:Mutable<'v>) : unit -> Mutable<'v> = fun () -> value v
-    static member instance (_:Lifter, f: 's -> 't, _:'s brick -> 't brick) = fun () -> convert f
+    static member instance (_:Lifter, v:'v, _:Mutable<'v>) : unit -> Mutable<'v> = 
+        fun () -> 
+            MutableBrick<'v>(CurrentTick, v) :> _
+
+    static member instance (_:Lifter, f: 's -> 't, _:'s brick -> 't brick) = 
+        fun () -> 
+            fun (s: 's brick) ->
+                brick {
+                    let! s = s
+                    return f s
+                }
+
     static member instance (_:Lifter, f: 's -> 'e -> 's, _:'s brick -> 'e brick -> 's brick) =
         fun () ->
             fun (s: 's brick) (e: 'e brick) ->
@@ -460,16 +473,6 @@ type Lifter = Lifter with
                 }
 
 let inline lift f = Inline.instance(Lifter,f) ()
-
-// tbd: do we need this anymore?
-
-let liftFolder (f: ('s * 'e) -> 's) =
-    fun (s: 's brick, e: 'e brick) ->
-        brick {
-            let! s = s
-            let! e = e
-            return f(s,e)
-        }
 
 let transaction = new TransactionBuilder()
 

@@ -16,7 +16,7 @@ module Channel =
             | Progress values -> yield! Progress (f values)
         }
 
-    let inline source v = value v
+    let inline source v = lift v
 
     // push an element into a channel
     

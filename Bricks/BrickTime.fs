@@ -60,8 +60,7 @@ let private mapSet f channel =
 
     Channel.map reset map channel 
 
-let private materializeCollection (s : ('d * 'v) channel) = 
-    convert (fun (_, value) -> value) s
+let private materializeCollection (s : ('d * 'v) channel) = lift snd s
 
 type Materializer = Materializer with
 
