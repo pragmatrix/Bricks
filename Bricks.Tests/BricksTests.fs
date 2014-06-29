@@ -61,7 +61,9 @@ type BrickTests() =
 
         () |> transaction { write a 1 }
 
-        b.evaluate() |> should equal (Progress [1])
+        let r = b.evaluate() 
+        printfn "%A" r
+        r |> should equal (Progress [1])
 
         () |> transaction { write a 2 }
 

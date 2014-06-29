@@ -33,17 +33,30 @@ type Beacon = { mutable valid: bool }
 type Tick = int64
 
 type Versioned = interface
-        abstract member tick : Tick
+        abstract member value : (Tick * obj)
+        abstract member tail : Versioned seq
     end
+
+
+[<AutoOpen>]
+module VersionedExtensions = 
+
+    type Versioned with
+        member this.last =
+            let t = this.tail
+            if Seq.isEmpty t then
+                this
+            else 
+                Seq.last t
 
 type BeaconNode = 
     | Mutable of Beacon
     | Computed of Beacon * BeaconNode list
 
 and Brick =
-    abstract member invalidate : unit -> unit
     abstract member versioned : Versioned with get
     abstract member node : BeaconNode
+    abstract member evaluateT: unit -> ITramp<obj>
 
 type History<'v> = 
     | Reset of 'v
@@ -55,14 +68,15 @@ type 'v brick =
     abstract member value: 'v option
     abstract member history: 'd brick -> ITramp<History<'d>>
     abstract member previous: 'd brick -> 'd option
-    abstract member valid: bool
 
 type Mutable<'v> = 
     inherit brick<'v>
     abstract member write: Tick -> 'v -> unit
     abstract member reset: Tick -> unit
 
-let updateNode node = 
+let private updateNode node = 
+
+    // tbd: tramp or use tailcalls to save stack space
 
     let rec un node notify = 
         match node with
@@ -87,32 +101,32 @@ module BrickExtensions =
             updateNode this.node
             this.evaluateT().Run()
 
-type Versioned<'v> = { tick: Tick; value: 'v; mutable next: Versioned<'v> option } with
+        member this.valid = 
+            match this.node with
+            | Mutable b -> b.valid
+            | Computed (b, _) -> b.valid
+
+type Versioned<'v> = { value: (Tick * 'v); mutable next: Versioned<'v> option } with
+
+    member private this.boxedValue = fst this.value, snd this.value |> box
 
     interface Versioned with
-        override this.tick = this.tick
+        member this.value = this.boxedValue
+        member this.tail = this.tail |> Seq.map (fun v -> v :> Versioned)
 
-    static member single (tick: Tick, value: 'v) = { tick = tick; value = value; next = None }
+    static member single (tick: Tick, value: 'v) = { value = (tick, value); next = None }
 
-(*
-    static member ofSeq (s: 'v seq) =
-        let h = Versioned.single (Seq.head s)
-        h.pushSeq (Seq.skip 1 s) |> ignore
-        h
-*)
     member this.push (time: Tick, value: 'v) =
         assert(this.next.IsNone)
         let n = Versioned<'v>.single (time, value)
         this.next <- Some n
         n
 
-    member this.head = this.value
+    member this.head = this
 
     member this.tail =
-        this.next
-        |> Seq.unfold (Option.map (fun n -> n.value, n.next))
-        |> Seq.toList
-
+        this.next |> Seq.unfold (Option.map (fun n -> n, n.next))
+    
     member this.pushSeq values = 
         values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
 
@@ -125,10 +139,11 @@ let internal newTick() =
     CurrentTick <- newT
     newT
 
+(** Mutable Value **)
+
 type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
     let mutable _versioned : Versioned<'v> option = None
-    let mutable _referrer = ISet.empty
     let mutable _current = tick, initial
 
     let beacon = Beacon.create
@@ -151,12 +166,8 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
     interface Mutable<'v> with
 
-        member this.invalidate() =
-            beacon.valid <- false
-
         member this.versioned = _versioned.Value :> Versioned
-        member this.value = _versioned |> Option.map(fun v -> v.value) 
-        member this.valid = beacon.valid
+        member this.value = _versioned |> Option.map(fun v -> snd v.value) 
 
         member this.history (_ : 'd brick) = 
             failwith "internal error"
@@ -164,7 +175,9 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
         member this.previous (_ : 'd brick) : 'd option = 
             failwith "internal error"
 
-        member this.evaluateT() : ITramp<'v> = eval
+        member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (fun v -> snd v |> box)
+
+        member this.evaluateT() : ITramp<'v> = eval |> Trampoline.map snd
 
         member this.write tick v =
             beacon.invalidate()
@@ -176,7 +189,122 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
         member this.node = node
 
+(** SIGNAL **)
 
+type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v) =
+
+    let numParams = List.length dependencies
+    let beacon = Beacon.create
+    let mutable _node = Computed (beacon, [])
+    let mutable _versioned : Versioned<'v> option = None
+
+    let mutable _arguments : obj array = [||]
+    let mutable _latest : Versioned array option = None
+
+    let proc (values : (int * (Tick * obj)) list) =
+
+        let isSet = Array.create numParams false
+        let clear() = Array.fill isSet 0 numParams false
+        
+        let tickOf (_, (t, _)) = t
+        
+        let rec p tick mustProcess soFar todo = 
+            match todo with
+            | [] -> 
+                if mustProcess then
+                    let res = processor _arguments
+                    (tick, res) :: soFar 
+                else
+                    soFar
+                |> List.rev
+            | (i, (t, v) as next) :: rest ->
+                let canUse = t = tick && not isSet.[i]
+                if canUse then 
+                    _arguments.[i] <- v
+                    p tick true soFar rest
+                else
+                    assert (mustProcess)
+                    let res = processor _arguments
+                    clear()
+                    let nextTick = tickOf next
+                    p nextTick false ((tick, res)::soFar) todo
+                    
+        match values with
+        | [] -> []
+        | (first::_) -> p (tickOf first) false [] values
+    
+    let eval = 
+        tramp {
+            // even if we don't use the values directly, we need to run evaluateT to update the versioned chains
+            let! _ = dependencies |> Seq.map (fun d -> d.evaluateT()) |> trampSeq
+            let versioned = dependencies |> Seq.map (fun d -> d.versioned)
+
+            // we are processing tuples of tick, value index, value
+
+            let toProcess = 
+                match _latest with
+                | None -> 
+                    // initialize the value array to the latest values
+                    _arguments <-
+                        versioned 
+                        |> Seq.map (fun v -> v.value |> snd)
+                        |> Seq.toArray
+
+                    versioned 
+                    |> Seq.mapi (fun i v -> i, v.value)
+
+                | Some latest -> 
+                    latest 
+                    |> Seq.mapi (fun i v -> i, v.tail)
+                    |> Seq.collect 
+                        (fun (i, vs) -> 
+                            vs 
+                            |> Seq.map (fun v -> i, v.value))
+
+            _latest <-
+                versioned
+                |> Seq.map (fun v -> v.last)
+                |> Seq.toArray
+                |> Some
+
+            let orderedByTick = 
+                toProcess |>
+                Seq.sortBy (fun v -> v |> snd |> fst)
+
+            let res = proc (orderedByTick |> Seq.toList)
+
+            // note that nodes might change!
+            let depNodes = dependencies |> Seq.map (fun d -> d.node)
+            _node <- Computed (beacon, depNodes |> Seq.toList)
+
+            _versioned <-        
+                match _versioned with
+                | None -> Versioned<'v>.single (Seq.last res)
+                | Some v -> v.pushSeq res
+                |> Some
+
+            beacon.valid <- true
+            return _versioned.Value.value
+        }
+
+    interface 'v brick with
+
+        member this.versioned = _versioned.Value :> Versioned
+        member this.value = _versioned |> Option.map(fun v -> snd v.value) 
+
+        member this.history (_ : 'd brick) = 
+            failwith "internal error"
+
+        member this.previous (_ : 'd brick) : 'd option = 
+            failwith "internal error"
+
+        member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (snd >> box)
+        member this.evaluateT() : ITramp<'v> = eval |> Trampoline.map snd
+
+        member this.node = _node
+
+
+(** COMPUTED **)
 
 type internal Trace = Brick list
 
@@ -206,7 +334,7 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
             let resultTick =
                 if t = [] then CurrentTick else
                 t 
-                |> Seq.map (fun dep -> dep.versioned.tick) 
+                |> Seq.map (fun dep -> dep.versioned.value |> fst) 
                 |> Seq.max
 
             let depNodes = 
@@ -226,16 +354,10 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
             return _versioned.Value.value
         }
 
-    member internal this.valid = beacon.valid
-
     interface 'v brick with
 
-        member this.invalidate() =
-            beacon.valid <- false
-
         member this.versioned = _versioned.Value :> Versioned
-        member this.value = _versioned |> Option.map(fun v -> v.value) 
-        member this.valid = this.valid
+        member this.value = _versioned |> Option.map(fun v -> snd v.value) 
 
         member this.history (dep : 'd brick) = 
             tramp {
@@ -243,17 +365,18 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
                 return 
                     match _trace.get dep with
                     | None -> Reset depV
-                    | Some (:? Versioned<'d> as v) -> Progress v.tail
+                    | Some (:? Versioned<'d> as v) -> Progress (v.tail |> Seq.map(fun v -> v.value |> snd) |> Seq.toList)
                     | _ -> failwith "internal error"
             }
 
         member this.previous (dep : 'd brick) : 'd option = 
             match _trace.get dep with
             | None -> None
-            | Some (:? Versioned<'d> as v) -> Some v.head
+            | Some (:? Versioned<'d> as v) -> Some (snd v.head.value)
             | _ -> failwith "internal error"
-    
-        member this.evaluateT() : ITramp<'v> = eval
+
+        member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (snd >> box)
+        member this.evaluateT() : ITramp<'v> = eval |> Trampoline.map snd
 
         member this.node = _node
 
@@ -270,21 +393,6 @@ type PreviousMarker<'v> = PreviousMarker of 'v brick
 let valueOfSelf = SelfValueMarker
 let inline historyOf b = HistoryMarker b
 let inline previousOf b = PreviousMarker b
-
-let private trampSeq (s: seq<ITramp<'v>>) : ITramp<'v list> =
-    let rec ts todo =
-        tramp {
-            match todo with
-            | head::rest ->
-                let! v = head
-                let! r = ts rest
-                return v::r
-            | [] ->
-                return []
-        }
-
-    s |> Seq.toList |> ts
-
 
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
@@ -445,7 +553,7 @@ type 'v program(root : 'v brick) =
 
     member this.apply(t: Transaction) = t()
 
-(** LIFT **)
+(** LIFT for continous functions **)
 
 type Lifter = Lifter with
    
@@ -453,28 +561,68 @@ type Lifter = Lifter with
         fun () -> 
             MutableBrick<'v>(CurrentTick, v) :> _
 
-    static member instance (_:Lifter, f: 's -> 't, _:'s brick -> 't brick) = 
+    static member instance (_:Lifter, f: 's -> 't, _:'s brick -> 'r brick) = 
         fun () -> 
-            fun (s: 's brick) ->
+            fun s ->
                 brick {
                     let! s = s
                     return f s
                 }
 
-    static member instance (_:Lifter, f: 's -> 'e -> 's, _:'s brick -> 'e brick -> 's brick) =
+    static member instance (_:Lifter, f: 's1 -> 's2 -> 't, _:'s1 brick -> 's2 brick -> 'r brick) =
         fun () ->
-            fun (s: 's brick) (e: 'e brick) ->
+            fun s1 s2 ->
                 brick {
-                    let! s = s
-                    let! e = e
-                    return f s e
+                    let! s1 = s1
+                    let! s2 = s2
+                    return f s1 s2
+                }
+
+    static member instance (_:Lifter, f: 's1 -> 's2 -> 's3 -> 't, _:'s1 brick -> 's2 brick -> 's3 brick -> 'r brick) =
+        fun () ->
+            fun s1 s2 s3 ->
+                brick {
+                    let! s1 = s1
+                    let! s2 = s2
+                    let! s3 = s3
+                    return f s1 s2 s3
                 }
 
 let inline lift f = Inline.instance(Lifter,f) ()
 
+(** LIFT for signals **)
+
+type SignalLifter = SignalLifter with
+   
+    static member instance (_:SignalLifter, v:'v, _:Mutable<'v>) : unit -> Mutable<'v> = 
+        fun () -> 
+            MutableBrick<'v>(CurrentTick, v) :> _
+
+    static member instance (_:SignalLifter, f: 's -> 'r, _:'s brick -> 'r brick) = 
+        fun () -> 
+            fun s ->
+                let p (a: obj array) = f (unbox a.[0])
+                SignalBrick<_>([s], p)
+
+    static member instance (_:SignalLifter, f: 's1 -> 's2 -> 'r, _:'s1 brick -> 's2 brick -> 'r brick) =
+        fun () ->
+            fun s1 s2 ->
+                let p (a: obj array) = f (unbox a.[0]) (unbox a.[1])
+                SignalBrick<_>([s1;s2], p)
+
+    static member instance (_:SignalLifter, f: 's1 -> 's2 -> 's3 -> 'r, _:'s1 brick -> 's2 brick -> 's3 brick -> 'r brick) =
+        fun () ->
+            fun s1 s2 s3 ->
+                let p (a: obj array) = f (unbox a.[0]) (unbox a.[1]) (unbox a.[2])
+                SignalBrick<_>([s1;s2;s3], p)
+
+
+let inline signal f = Inline.instance(SignalLifter,f) ()
+
+
 let transaction = new TransactionBuilder()
 
-let valueOf (brick : Brick<'v>) = if brick.valid then brick.value else None
-let toProgram b = new Program<_>(b)
+let valueOf (brick : 'v brick) = if brick.valid then brick.value else None
+let toProgram b = new (_ program)(b)
     
 [<assembly:AutoOpen("BricksCore")>] ()

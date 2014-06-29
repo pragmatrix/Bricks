@@ -50,3 +50,23 @@ type TrampBuilder() =
         new Delay<_>(f) :> ITramp<_>
    
 let tramp = new TrampBuilder()
+
+let trampSeq (s: seq<ITramp<'v>>) : ITramp<'v list> =
+    let rec ts todo =
+        tramp {
+            match todo with
+            | head::rest ->
+                let! v = head
+                let! r = ts rest
+                return v::r
+            | [] ->
+                return []
+        }
+
+    s |> Seq.toList |> ts
+
+let map f t = 
+    tramp {
+        let! v = t
+        return f v
+    }
