@@ -49,16 +49,16 @@ type History<'v> =
     | Reset of 'v
     | Progress of 'v seq
 
-type Brick<'v> = 
+type 'v brick = 
     inherit Brick
     abstract member evaluateT: unit -> ITramp<'v>
     abstract member value: 'v option
-    abstract member history: Brick<'d> -> ITramp<History<'d>>
-    abstract member previous: Brick<'d> -> 'd option
+    abstract member history: 'd brick -> ITramp<History<'d>>
+    abstract member previous: 'd brick -> 'd option
     abstract member valid: bool
 
 type Mutable<'v> = 
-    inherit Brick<'v>
+    inherit brick<'v>
     abstract member write: Tick -> 'v -> unit
     abstract member reset: Tick -> unit
 
@@ -82,7 +82,7 @@ let updateNode node =
 [<AutoOpen>]
 module BrickExtensions =
 
-    type Brick<'v> with
+    type 'v brick with
         member this.evaluate() =
             updateNode this.node
             this.evaluateT().Run()
@@ -124,87 +124,6 @@ let internal newTick() =
     let newT = CurrentTick + 1L
     CurrentTick <- newT
     newT
-
-type internal Trace = Brick list
-
-type internal ComputationResult<'v> = ITramp<Trace * 'v list>
-
-type internal Computation<'v> = 'v brick -> ComputationResult<'v>
-
-and 't brick = Brick<'t>
-
-and ComputedBrick<'v>(computation : Computation<'v>) as self =
-    
-    let beacon = Beacon.create
-    let mutable _node = Computed (beacon, [])
-    let mutable _trace : IMap<Brick, Versioned> = IMap.empty
-    let mutable _versioned : Versioned<'v> option = None
-
-    let eval = 
-        tramp {
-            if beacon.valid then
-                return _versioned.Value.value 
-            else
-            let! t, c = computation self
-            // tbd: combine the following queries
-            _trace <- 
-                t
-                |> Seq.map (fun dep -> dep, dep.versioned) 
-                |> IMap.ofSeq
-
-            let resultTick =
-                if t = [] then CurrentTick else
-                t 
-                |> Seq.map (fun dep -> dep.versioned.tick) 
-                |> Seq.max
-
-            let depNodes = 
-                t 
-                |> Seq.map (fun dep -> dep.node) 
-                |> Seq.toList
-
-            _node <- Computed (beacon, depNodes)
-
-            _versioned <-        
-                match _versioned with
-                | None -> Versioned<'v>.single (resultTick, (Seq.last c))
-                | Some v -> v.pushSeq (c |> Seq.map (fun c -> (resultTick, c)))
-                |> Some
-
-            beacon.valid <- true
-            return _versioned.Value.value
-        }
-
-    member internal this.valid = beacon.valid
-
-    interface Brick<'v> with
-
-        member this.invalidate() =
-            beacon.valid <- false
-
-        member this.versioned = _versioned.Value :> Versioned
-        member this.value = _versioned |> Option.map(fun v -> v.value) 
-        member this.valid = this.valid
-
-        member this.history (dep : 'd brick) = 
-            tramp {
-                let! depV = dep.evaluateT()
-                return 
-                    match _trace.get dep with
-                    | None -> Reset depV
-                    | Some (:? Versioned<'d> as v) -> Progress v.tail
-                    | _ -> failwith "internal error"
-            }
-
-        member this.previous (dep : 'd brick) : 'd option = 
-            match _trace.get dep with
-            | None -> None
-            | Some (:? Versioned<'d> as v) -> Some v.head
-            | _ -> failwith "internal error"
-    
-        member this.evaluateT() : ITramp<'v> = eval
-
-        member this.node = _node
 
 type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
@@ -257,15 +176,96 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
         member this.node = node
 
+
+
+type internal Trace = Brick list
+
+type internal ComputationResult<'v> = ITramp<Trace * 'v list>
+
+type internal Computation<'v> = 'v brick -> ComputationResult<'v>
+
+and ComputedBrick<'v>(computation : Computation<'v>) as self =
+    
+    let beacon = Beacon.create
+    let mutable _node = Computed (beacon, [])
+    let mutable _trace : IMap<Brick, Versioned> = IMap.empty
+    let mutable _versioned : Versioned<'v> option = None
+
+    let eval = 
+        tramp {
+            if beacon.valid then
+                return _versioned.Value.value 
+            else
+            let! t, c = computation self
+            // tbd: combine the following queries
+            _trace <- 
+                t
+                |> Seq.map (fun dep -> dep, dep.versioned) 
+                |> IMap.ofSeq
+
+            let resultTick =
+                if t = [] then CurrentTick else
+                t 
+                |> Seq.map (fun dep -> dep.versioned.tick) 
+                |> Seq.max
+
+            let depNodes = 
+                t 
+                |> Seq.map (fun dep -> dep.node) 
+                |> Seq.toList
+
+            _node <- Computed (beacon, depNodes)
+
+            _versioned <-        
+                match _versioned with
+                | None -> Versioned<'v>.single (resultTick, (Seq.last c))
+                | Some v -> v.pushSeq (c |> Seq.map (fun c -> (resultTick, c)))
+                |> Some
+
+            beacon.valid <- true
+            return _versioned.Value.value
+        }
+
+    member internal this.valid = beacon.valid
+
+    interface 'v brick with
+
+        member this.invalidate() =
+            beacon.valid <- false
+
+        member this.versioned = _versioned.Value :> Versioned
+        member this.value = _versioned |> Option.map(fun v -> v.value) 
+        member this.valid = this.valid
+
+        member this.history (dep : 'd brick) = 
+            tramp {
+                let! depV = dep.evaluateT()
+                return 
+                    match _trace.get dep with
+                    | None -> Reset depV
+                    | Some (:? Versioned<'d> as v) -> Progress v.tail
+                    | _ -> failwith "internal error"
+            }
+
+        member this.previous (dep : 'd brick) : 'd option = 
+            match _trace.get dep with
+            | None -> None
+            | Some (:? Versioned<'d> as v) -> Some v.head
+            | _ -> failwith "internal error"
+    
+        member this.evaluateT() : ITramp<'v> = eval
+
+        member this.node = _node
+
 type 't bricks = seq<'t brick>
 
-let internal makeBrick<'v> f = ComputedBrick<'v>(f) :> Brick<'v>
+let internal makeBrick<'v> f = ComputedBrick<'v>(f) :> 'v brick
 
 // i want these in a module named Brick
 
 type SelfValueMarker = SelfValueMarker
-type HistoryMarker<'v> = HistoryMarker of Brick<'v>
-type PreviousMarker<'v> = PreviousMarker of Brick<'v>
+type HistoryMarker<'v> = HistoryMarker of 'v brick
+type PreviousMarker<'v> = PreviousMarker of 'v brick
 
 let valueOfSelf = SelfValueMarker
 let inline historyOf b = HistoryMarker b
@@ -436,7 +436,7 @@ type TransactionBuilder() =
 
 (* PROGRAM *)
 
-type Program<'v>(root : Brick<'v>) =
+type 'v program(root : 'v brick) =
             
     interface IDisposable with
         member this.Dispose() = ()
@@ -444,8 +444,6 @@ type Program<'v>(root : Brick<'v>) =
     member this.run() = root.evaluate()
 
     member this.apply(t: Transaction) = t()
-
-type 'v program = Program<'v>
 
 (** LIFT **)
 
