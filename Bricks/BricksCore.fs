@@ -479,5 +479,4 @@ let transaction = new TransactionBuilder()
 let valueOf (brick : Brick<'v>) = if brick.valid then brick.value else None
 let toProgram b = new Program<_>(b)
     
-[<assembly:AutoOpen("BricksCore")>]
-do ()
+[<assembly:AutoOpen("BricksCore")>] ()

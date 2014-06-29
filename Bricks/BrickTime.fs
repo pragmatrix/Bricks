@@ -118,5 +118,4 @@ module Published =
     let inline fold f s source = Inline.instance(Folder, source, f) s
     let inline scan f s source = Inline.instance(Scanner, source, f) s
 
-    [<assembly:AutoOpen("BrickTime.Published")>]
-    do ()
+    [<assembly:AutoOpen("BrickTime.Published")>] ()

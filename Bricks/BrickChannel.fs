@@ -49,5 +49,4 @@ module Channel =
     let map (reset: 's -> 't) (mapper: 's -> 't) (source: 's channel) : 't channel = 
         mapChunked reset (Seq.map mapper) source
 
-[<assembly:AutoOpen("BrickChannel")>]
-do ()
+[<assembly:AutoOpen("BrickChannel")>] ()
