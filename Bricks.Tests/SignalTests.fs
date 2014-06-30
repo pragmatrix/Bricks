@@ -38,6 +38,9 @@ type SignalTests() =
         target.evaluate() |> should equal (2 * 3)
         !count |> should equal 2
 
+
+    (* it might be better to allow only one write, the latest write in the transaction *)
+
     [<Test>]
     member this.duplicatedWritesToTheSameSignalInTheSameTransactionGetSeparated() = 
         let source = signal 1
