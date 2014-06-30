@@ -544,48 +544,26 @@ type 'v program(root : 'v brick) =
 
     member this.apply(t: Transaction) = t()
 
-(** LIFT for continous functions **)
+(** LIFT for continuous functions **)
 
-type Lifter = Lifter with
-   
-    static member instance (_:Lifter, v:'v, _:Mutable<'v>) : unit -> Mutable<'v> = 
-        fun () -> 
-            MutableBrick<'v>(CurrentTick, v) :> _
+let var v = MutableBrick<'v>(CurrentTick, v) :> Mutable<'v>
 
-    static member instance (_:Lifter, f: 's -> 't, _:'s brick -> 'r brick) = 
-        fun () -> 
-            fun s ->
-                brick {
-                    let! s = s
-                    return f s
-                }
+let lift (f: 's -> 't) (s: 's brick) =
+    brick {
+        let! s = s
+        return f s
+    }
 
-    static member instance (_:Lifter, f: 's1 -> 's2 -> 't, _:'s1 brick -> 's2 brick -> 'r brick) =
-        fun () ->
-            fun s1 s2 ->
-                brick {
-                    let! s1 = s1
-                    let! s2 = s2
-                    return f s1 s2
-                }
-
-    static member instance (_:Lifter, f: 's1 -> 's2 -> 's3 -> 't, _:'s1 brick -> 's2 brick -> 's3 brick -> 'r brick) =
-        fun () ->
-            fun s1 s2 s3 ->
-                brick {
-                    let! s1 = s1
-                    let! s2 = s2
-                    let! s3 = s3
-                    return f s1 s2 s3
-                }
-
-let inline lift f = Inline.instance(Lifter, f) ()
+let lift2 (f: 's1 -> 's2 -> 't) (s1: 's1 brick) (s2: 's2 brick) =
+    brick {
+        let! s1 = s1
+        let! s2 = s2
+        return f s1 s2
+    }
 
 (* Signal lifting *)
 
-let signal v = MutableBrick<'v>(CurrentTick, v) :> Mutable<'v>
-
-let inline signal1 (f : 's -> 'r) (s: 's brick) = 
+let inline signal (f : 's -> 'r) (s: 's brick) = 
     let p (a: obj array) = f (unbox a.[0])
     SignalBrick<_>([s], p) :> _ brick
 
@@ -606,7 +584,7 @@ let foldp (f: 's -> 'v -> 's) (initial: 's) (source: 'v brick) =
         state := s
         !state
 
-    signal1 folder source
+    signal folder source
 
 let transaction = new TransactionBuilder()
 

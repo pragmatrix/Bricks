@@ -33,9 +33,9 @@ type GCTests() =
 
     [<Test>]
     member this.GCDoesNotInvalidateOrphanByNotEvaluating() =
-        let a = lift 3
+        let a = var 3
 
-        let useA = lift true
+        let useA = var true
 
         let c = brick {
             let! useA = useA
@@ -110,7 +110,7 @@ type GCTests() =
 
         let runProgram() = 
             let tmps = [| newTmp(0); newTmp(1) |]
-            let current = lift 0
+            let current = var 0
             let b = brick {
                 let! c = current
                 let! tmp = tmps.[c]
@@ -136,8 +136,8 @@ type GCTests() =
 
     [<Test>]
     member this.GCCollectedWritesTranscend() =
-        let alive = lift true
-        let a = lift 1
+        let alive = var true
+        let a = var 1
         let b = brick {
             let! alive = alive
             if (alive) then

@@ -12,7 +12,7 @@ type TransactionTests() =
     [<Test>]
     member this.transactionWrite() =
         
-        let a = lift 3
+        let a = var 3
         let c = brick {
             let! a = a
             return a * 5
@@ -28,8 +28,8 @@ type TransactionTests() =
 
     [<Test>]
     member this.continuationGetsInvalidated() = 
-        let a = lift 3
-        let b = lift 4
+        let a = var 3
+        let b = var 4
         let c = brick {
             let! a = a
             let! b = b
@@ -46,7 +46,7 @@ type TransactionTests() =
 
     [<Test>]
     member this.lastWriteWins() =
-        let a = lift 3
+        let a = var 3
         let c = brick {
             let! a = a
             return a * 5
@@ -63,7 +63,7 @@ type TransactionTests() =
 
     [<Test>]
     member this.transactionReset() =
-        let a = lift 3
+        let a = var 3
         let c = brick {
             let! a = a
             return a * 5

@@ -30,7 +30,7 @@ type BrickTests() =
 
     [<Test>]
     member this.historyDoesNotExistOnNewValue() =
-        let a = lift 0
+        let a = var 0
         let b = brick {
             let! ha = historyOf a
             return ha
@@ -40,7 +40,7 @@ type BrickTests() =
 
     [<Test>]
     member this.historyDoesNotExistIfValueWasChangedButNotEvaluatedBefore() =
-        let a = lift 0
+        let a = var 0
         () |> transaction { write a 1 }
         let b = brick {
             let! ha = historyOf a
@@ -51,7 +51,7 @@ type BrickTests() =
 
     [<Test>]
     member this.historyExistsIfValueWasEvaluated() =
-        let a = lift 0
+        let a = var 0
         let b = brick {
             let! ha = historyOf a
             return ha
@@ -72,7 +72,7 @@ type BrickTests() =
 
     [<Test>]
     member this.historyWithThirdPartyEvaluatingSource() =
-        let a = lift 0
+        let a = var 0
         let b = brick {
             let! ha = historyOf a
             return ha
@@ -98,7 +98,7 @@ type BrickTests() =
 
     [<Test>]
     member this.yieldWithHistory() = 
-        let source = lift 0
+        let source = var 0
 
         let a = brick {
             yield! source
@@ -119,7 +119,7 @@ type BrickTests() =
 
     [<Test>]
     member this.firstTimeHistoryEvaluationReturnsResetLatest() = 
-        let source = lift 0
+        let source = var 0
 
         let a = brick {
             yield! source
@@ -135,7 +135,7 @@ type BrickTests() =
 
     [<Test>]
     member this.conditionalSharedHistoryCatchesUp() = 
-        let source = lift 0
+        let source = var 0
 
         let a = brick {
             yield! source
@@ -153,7 +153,7 @@ type BrickTests() =
         }
 
 
-        let evalC = lift true
+        let evalC = var true
 
         let root = brick {
             let! b = b
@@ -197,7 +197,7 @@ type BrickTests() =
     [<Test>]
     member this.previous() =
 
-        let source = lift 0
+        let source = var 0
 
         let a = brick {
             let! p = previousOf source
@@ -221,8 +221,8 @@ type BrickTests() =
     [<Test>]
     member this.previousGetsLostIfSourceIsNotReferencedAnymore() =
         
-        let source = lift 0
-        let useSource = lift true
+        let source = var 0
+        let useSource = var true
 
         let a = brick {
             let! p = previousOf source

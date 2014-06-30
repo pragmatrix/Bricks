@@ -8,15 +8,15 @@ type SignalTests() =
 
     [<Test>]
     member this.simpleSignalProcessing() = 
-        let source = signal 1
-        let target = signal1 ((*) 2) source
+        let source = var 1
+        let target = signal ((*) 2) source
         
         target.evaluate() |> should equal 2
 
     [<Test>]
     member this.signalWritesInTheSameTransactionGetCombined() = 
-        let source = signal 1
-        let source2 = signal 2
+        let source = var 1
+        let source2 = var 2
 
         let count = ref 0
 
@@ -43,8 +43,8 @@ type SignalTests() =
 
     [<Test>]
     member this.duplicatedWritesToTheSameSignalInTheSameTransactionGetSeparated() = 
-        let source = signal 1
-        let source2 = signal 2
+        let source = var 1
+        let source2 = var 2
 
         let count = ref 0
 
@@ -70,8 +70,8 @@ type SignalTests() =
 
     [<Test>]
     member this.signalWritesInADifferentTransactionGetSeparated() = 
-        let source = signal 1
-        let source2 = signal 2
+        let source = var 1
+        let source2 = var 2
 
         let count = ref 0
 
@@ -101,7 +101,7 @@ type SignalTests() =
 
     [<Test>]
     member this.foldp1IgnoreFirstWriteInFirstEvaluation() = 
-        let source = signal 1
+        let source = var 1
         () |> transaction { write source 2 }
         
         let target = foldp (+) 0 source
@@ -111,7 +111,7 @@ type SignalTests() =
 
     [<Test>]
     member this.foldp1DoesNotLooseValuesAfterFirstEvaluation() = 
-        let source = signal 1
+        let source = var 1
         
         let target = foldp (+) 0 source
 
