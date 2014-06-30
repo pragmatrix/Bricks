@@ -143,31 +143,21 @@ let internal newTick() =
 
 type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
-    let mutable _versioned : Versioned<'v> option = None
-    let mutable _current = tick, initial
+    let mutable _versioned = Versioned<'v>.single(tick, initial)
 
     let beacon = Beacon.create
     let node = Mutable beacon
 
     let eval = 
         tramp {
-            if beacon.valid then
-                return _versioned.Value.value 
-            else
-            _versioned <-        
-                match _versioned with
-                | None -> Versioned<'v>.single (_current)
-                | Some v -> v.push _current
-                |> Some
-        
             beacon.valid <- true
-            return _versioned.Value.value
+            return _versioned.value
         }
 
     interface Mutable<'v> with
 
-        member this.versioned = _versioned.Value :> Versioned
-        member this.value = _versioned |> Option.map(fun v -> snd v.value) 
+        member this.versioned = _versioned :> _
+        member this.value = _versioned.value |> snd |> Some
 
         member this.history (_ : 'd brick) = 
             failwith "internal error"
@@ -180,12 +170,12 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
         member this.evaluateT() : ITramp<'v> = eval |> Trampoline.map snd
 
         member this.write tick v =
+            _versioned <- _versioned.push (tick, v)
             beacon.invalidate()
-            _current <- tick, v
 
         member this.reset tick =
+            _versioned <- _versioned.push (tick, initial)
             beacon.invalidate() 
-            _current <- tick, initial
 
         member this.node = node
 
@@ -221,6 +211,7 @@ type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v) =
                 let canUse = t = tick && not isSet.[i]
                 if canUse then 
                     _arguments.[i] <- v
+                    isSet.[i] <- true
                     p tick true soFar rest
                 else
                     assert (mustProcess)
@@ -588,37 +579,34 @@ type Lifter = Lifter with
                     return f s1 s2 s3
                 }
 
-let inline lift f = Inline.instance(Lifter,f) ()
+let inline lift f = Inline.instance(Lifter, f) ()
 
-(** LIFT for signals **)
+(* Signal lifting *)
 
-type SignalLifter = SignalLifter with
-   
-    static member instance (_:SignalLifter, v:'v, _:Mutable<'v>) : unit -> Mutable<'v> = 
-        fun () -> 
-            MutableBrick<'v>(CurrentTick, v) :> _
+let signal v = MutableBrick<'v>(CurrentTick, v) :> Mutable<'v>
 
-    static member instance (_:SignalLifter, f: 's -> 'r, _:'s brick -> 'r brick) = 
-        fun () -> 
-            fun s ->
-                let p (a: obj array) = f (unbox a.[0])
-                SignalBrick<_>([s], p)
+let inline signal1 (f : 's -> 'r) (s: 's brick) = 
+    let p (a: obj array) = f (unbox a.[0])
+    SignalBrick<_>([s], p) :> _ brick
 
-    static member instance (_:SignalLifter, f: 's1 -> 's2 -> 'r, _:'s1 brick -> 's2 brick -> 'r brick) =
-        fun () ->
-            fun s1 s2 ->
-                let p (a: obj array) = f (unbox a.[0]) (unbox a.[1])
-                SignalBrick<_>([s1;s2], p)
+let inline signal2 (f : 's1 -> 's2 -> 'r) (s1 : 's1 brick) (s2: 's2 brick) =
+    let p (a: obj array) = f (unbox a.[0]) (unbox a.[1])
+    SignalBrick<_>([s1;s2], p) :> 'r brick
 
-    static member instance (_:SignalLifter, f: 's1 -> 's2 -> 's3 -> 'r, _:'s1 brick -> 's2 brick -> 's3 brick -> 'r brick) =
-        fun () ->
-            fun s1 s2 s3 ->
-                let p (a: obj array) = f (unbox a.[0]) (unbox a.[1]) (unbox a.[2])
-                SignalBrick<_>([s1;s2;s3], p)
+let inline signal3 (f : 's1 -> 's2 -> 's3 -> 'r) (s1 : 's1 brick) (s2: 's2 brick) (s3: 's3 brick) =
+    let p (a: obj array) = f (unbox a.[0]) (unbox a.[1]) (unbox a.[2])
+    SignalBrick<_>([s1;s2;s3], p) :> 'r brick
 
+(* foldp, Elm inspired *)
 
-let inline signal f = Inline.instance(SignalLifter,f) ()
+let foldp (f: 's -> 'v -> 's) (initial: 's) (source: 'v brick) =
+    let state = ref initial
+    let folder value =
+        let s = f (!state) value
+        state := s
+        !state
 
+    signal1 folder source
 
 let transaction = new TransactionBuilder()
 

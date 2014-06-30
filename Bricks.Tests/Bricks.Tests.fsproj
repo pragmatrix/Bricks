@@ -54,6 +54,7 @@
   <Import Project="$(SolutionDir)\.nuget\NuGet.targets" Condition="Exists('$(SolutionDir)\.nuget\NuGet.targets')" />
   <ItemGroup>
     <Compile Include="BricksTests.fs" />
+    <Compile Include="SignalTests.fs" />
     <Compile Include="BrickSetTests.fs" />
     <Compile Include="TransactionTests.fs" />
     <Compile Include="GCTests.fs" />
