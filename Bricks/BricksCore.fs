@@ -57,10 +57,6 @@ and Brick =
     abstract member node : BeaconNode
     abstract member evaluateT: unit -> ITramp<obj>
 
-type History<'v> = 
-    | Reset of 'v
-    | Progress of 'v seq
-
 type 'v brick = 
     inherit Brick
     abstract member evaluateT: unit -> ITramp<'v>
@@ -299,7 +295,7 @@ type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v list) 
 
 type internal Trace = Brick list
 
-type internal ComputationResult<'v> = ITramp<Trace * 'v list>
+type internal ComputationResult<'v> = ITramp<Trace * 'v>
 
 type internal Computation<'v> = 'v brick -> ComputationResult<'v>
 
@@ -307,20 +303,14 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
     
     let beacon = Beacon.create
     let mutable _node = Computed (beacon, [])
-    let mutable _trace : IMap<Brick, Versioned> = IMap.empty
-    let mutable _versioned : Versioned<'v> option = None
+    let mutable _versioned : ('v Versioned) option = None
 
     let eval = 
         tramp {
             if beacon.valid then
-                return _versioned.Value.value 
+                return _versioned.Value.value
             else
-            let! t, c = computation self
-            // tbd: combine the following queries
-            _trace <- 
-                t
-                |> Seq.map (fun dep -> dep, dep.versioned) 
-                |> IMap.ofSeq
+            let! t, v = computation self
 
             let resultTick =
                 if t = [] then CurrentTick else
@@ -335,10 +325,12 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
 
             _node <- Computed (beacon, depNodes)
 
+            let newValue = resultTick, v
+
             _versioned <-        
                 match _versioned with
-                | None -> Versioned<'v>.single (resultTick, (Seq.last c))
-                | Some v -> v.pushSeq (c |> Seq.map (fun c -> (resultTick, c)))
+                | None -> Versioned<'v>.single newValue
+                | Some prev -> prev.push newValue
                 |> Some
 
             beacon.valid <- true
@@ -388,29 +380,13 @@ type BrickBuilder() =
             let v = b.value
             cont v b
 
-    member this.Return value = fun _ -> tramp { return [], [value] }
+    member this.Return value = fun _ -> tramp { return [], value }
     
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
             tramp {
                 let! value = brick.evaluateT();
-                return [brick:>Brick], [value]
-            }
-
-    member this.Combine (first: Computation<'v>, second: Computation<'v>) =
-        fun b ->
-            tramp {
-                let! (fd, fv) = first b
-                let! (sd, sv) = second b
-                return fd @ sd, fv @ sv
-            }
-
-    [<CustomOperation("yieldSeq")>]
-    member this.Write(nested : Computation<'v>, sequence: 'v seq) =
-        fun b ->
-            tramp {
-                let! (nd, nv) = nested b
-                return nd, nv @ (sequence |> Seq.toList)
+                return [brick:>Brick], value
             }
 
     member this.Run comp = makeBrick comp
