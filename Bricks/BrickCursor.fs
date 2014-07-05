@@ -1,7 +1,6 @@
 ﻿module BrickCursor
 
 open Collections
-open BrickChannel
 open BricksCore
 open BrickCollections
 
