@@ -54,12 +54,11 @@
   <Import Project="$(FSharpTargetsPath)" />
   <Import Project="$(SolutionDir)\.nuget\NuGet.targets" Condition="Exists('$(SolutionDir)\.nuget\NuGet.targets')" />
   <ItemGroup>
-    <Compile Include="BrickCollections.fs" />
-    <Compile Include="InlineHelper.fs" />
+    <Compile Include="Collections.fs" />
     <Compile Include="Trampoline.fs" />
     <Compile Include="BricksCore.fs" />
     <Compile Include="BrickChannel.fs" />
-    <Compile Include="BrickTime.fs" />
+    <Compile Include="BrickCollections.fs" />
     <Compile Include="Bricks.fs" />
     <Compile Include="BrickCursor.fs" />
     <None Include="packages.config" />

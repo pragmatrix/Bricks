@@ -1,9 +1,9 @@
 ﻿module BrickCursor
 
-open BrickCollections
+open Collections
 open BrickChannel
 open BricksCore
-open BrickTime
+open BrickCollections
 
 
 type cursor = int brick

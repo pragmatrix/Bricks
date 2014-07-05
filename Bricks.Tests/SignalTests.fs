@@ -9,7 +9,7 @@ type SignalTests() =
     [<Test>]
     member this.simpleSignalProcessing() = 
         let source = var 1
-        let target = signal ((*) 2) source
+        let target = Signal.map ((*) 2) source
         
         target.evaluate() |> should equal 2
 
@@ -24,7 +24,7 @@ type SignalTests() =
             count := !count + 1
             a * b
 
-        let target = signal2 f source source2
+        let target = Signal.lift2 f source source2
 
         target.evaluate() |> should equal 2
 
@@ -52,7 +52,7 @@ type SignalTests() =
             count := !count + 1
             a * b
 
-        let target = signal2 f source source2
+        let target = Signal.lift2 f source source2
 
         target.evaluate() |> should equal 2
 
@@ -79,7 +79,7 @@ type SignalTests() =
             count := !count + 1
             a * b
 
-        let target = signal2 f source source2
+        let target = Signal.lift2 f source source2
 
         target.evaluate() |> should equal 2
 
@@ -104,7 +104,7 @@ type SignalTests() =
         let source = var 1
         () |> transaction { write source 2 }
         
-        let target = foldp (+) 0 source
+        let target = Signal.foldp (+) 0 source
 
         target.evaluate() |> should equal 2
 
@@ -113,7 +113,7 @@ type SignalTests() =
     member this.foldp1DoesNotLooseValuesAfterFirstEvaluation() = 
         let source = var 1
         
-        let target = foldp (+) 0 source
+        let target = Signal.foldp (+) 0 source
 
         target.evaluate() |> should equal 1
 
@@ -121,7 +121,6 @@ type SignalTests() =
         () |> transaction { write source 3 }
 
         target.evaluate() |> should equal (1 + 2 + 3)
-
 
         
 

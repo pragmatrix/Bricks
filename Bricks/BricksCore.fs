@@ -8,8 +8,7 @@ open System.Collections.Immutable
 open System.Collections.Generic
 open System.Linq
 
-open BrickCollections
-open InlineHelper
+open Collections
 open Trampoline
 
 (** BRICK, ENVIRONMENT **)
@@ -114,8 +113,6 @@ type Versioned<'v> = { value: (Tick * 'v); mutable next: Versioned<'v> option } 
         member this.value = this.boxedValue
         member this.tail = this.tail |> Seq.map (fun v -> v :> Versioned)
 
-    static member single (tick: Tick, value: 'v) = { value = (tick, value); next = None }
-
     member this.push (time: Tick, value: 'v) =
         assert(this.next.IsNone)
         let n = Versioned<'v>.single (time, value)
@@ -127,8 +124,24 @@ type Versioned<'v> = { value: (Tick * 'v); mutable next: Versioned<'v> option } 
     member this.tail =
         this.next |> Seq.unfold (Option.map (fun n -> n, n.next))
     
+
     member this.pushSeq values = 
         values |> Seq.fold (fun (c : Versioned<_>) v -> c.push v) this
+
+    static member single (tick: Tick, value: 'v) = { value = (tick, value); next = None }
+
+    static member extend (versioned: Versioned<'v> option) (values: (Tick*'v) list) = 
+        match versioned with
+        | None -> Versioned.ofList values
+        | Some x -> x.pushSeq values |> Some
+
+    static member ofList (values : (Tick * 'v) list) : Versioned<'v> option =
+        match values with
+        | [] -> None
+        | first :: rest -> 
+            let head = Versioned.single first
+            head.pushSeq rest
+            |> Some
 
 (* Global Tick counter *)
 
@@ -181,7 +194,7 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
 (** SIGNAL **)
 
-type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v) =
+type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v list) =
 
     let numParams = List.length dependencies
     let beacon = Beacon.create
@@ -199,14 +212,19 @@ type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v) =
         let tickOf (_, (t, _)) = t
         
         let rec p tick mustProcess soFar todo = 
+
+            let proc() = 
+                processor _arguments
+                |> List.map (fun r -> (tick, r))
+
             match todo with
             | [] -> 
                 if mustProcess then
-                    let res = processor _arguments
-                    (tick, res) :: soFar 
+                    let res = proc()
+                    res :: soFar 
                 else
                     soFar
-                |> List.rev
+                |> List.rev |> List.flatten
             | (i, (t, v) as next) :: rest ->
                 let canUse = t = tick && not isSet.[i]
                 if canUse then 
@@ -215,10 +233,10 @@ type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v) =
                     p tick true soFar rest
                 else
                     assert (mustProcess)
-                    let res = processor _arguments
+                    let res = proc()
                     clear()
                     let nextTick = tickOf next
-                    p nextTick false ((tick, res)::soFar) todo
+                    p nextTick false (res::soFar) todo
                     
         match values with
         | [] -> []
@@ -265,14 +283,10 @@ type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v) =
             let res = proc (orderedByTick |> Seq.toList)
 
             // note that nodes might change!
-            let depNodes = dependencies |> Seq.map (fun d -> d.node)
-            _node <- Computed (beacon, depNodes |> Seq.toList)
+            let depNodes = dependencies |> List.map (fun d -> d.node)
+            _node <- Computed (beacon, depNodes)
 
-            _versioned <-        
-                match _versioned with
-                | None -> Versioned<'v>.single (Seq.last res)
-                | Some v -> v.pushSeq res
-                |> Some
+            _versioned <- Versioned.extend _versioned res
 
             beacon.valid <- true
             return _versioned.Value.value
@@ -473,6 +487,11 @@ type BrickBuilder() =
 
 let brick = new BrickBuilder()
 
+let mutating (b : 'v brick) = 
+    match b with
+    | :? Mutable<'v> as mb -> mb
+    | _ -> failwith "brick must be mutable"
+
 (* Transaction
 
     A transaction can evaluate brick values and set new brick values.
@@ -518,19 +537,21 @@ type TransactionBuilder() =
             }
 
     [<CustomOperation("write")>]
-    member this.Write(nested : TransactionM, brick: Mutable<'v>, value: 'v) =
+    member this.Write(nested : TransactionM, brick: 'v brick, value: 'v) =
+        let m = mutating brick
         fun t ->
             tramp {
                 let! state = nested t
-                return (fun time -> brick.write time value) :: state
+                return (fun time -> m.write time value) :: state
             }
             
     [<CustomOperation("reset")>]
-    member this.Reset(nested: TransactionM, brick : Mutable<'v>) =
+    member this.Reset(nested: TransactionM, brick : 'v brick) =
+        let m = mutating brick
         fun t ->
             tramp {
                 let! state = nested t
-                return (fun time -> brick.reset time) :: state
+                return (fun time -> m.reset time) :: state
             }
 
 (* PROGRAM *)
@@ -544,47 +565,69 @@ type 'v program(root : 'v brick) =
 
     member this.apply(t: Transaction) = t()
 
-(** LIFT for continuous functions **)
+let var v = MutableBrick<'v>(CurrentTick, v) :> 'v brick
 
-let var v = MutableBrick<'v>(CurrentTick, v) :> Mutable<'v>
+(* Signal: discrete values *)
 
-let lift (f: 's -> 't) (s: 's brick) =
-    brick {
-        let! s = s
-        return f s
-    }
+module Signal =
 
-let lift2 (f: 's1 -> 's2 -> 't) (s1: 's1 brick) (s2: 's2 brick) =
-    brick {
-        let! s1 = s1
-        let! s2 = s2
-        return f s1 s2
-    }
+    let inline lift (f : 's -> 'r) (s: 's brick) = 
+        let p (a: obj array) = [f (unbox a.[0])]
+        SignalBrick<_>([s], p) :> _ brick
 
-(* Signal lifting *)
+    let inline map f s = lift f s
 
-let inline signal (f : 's -> 'r) (s: 's brick) = 
-    let p (a: obj array) = f (unbox a.[0])
-    SignalBrick<_>([s], p) :> _ brick
+    let inline lift2 (f : 's1 -> 's2 -> 'r) (s1 : 's1 brick) (s2: 's2 brick) =
+        let p (a: obj array) = [f (unbox a.[0]) (unbox a.[1])]
+        SignalBrick<_>([s1;s2], p) :> 'r brick
 
-let inline signal2 (f : 's1 -> 's2 -> 'r) (s1 : 's1 brick) (s2: 's2 brick) =
-    let p (a: obj array) = f (unbox a.[0]) (unbox a.[1])
-    SignalBrick<_>([s1;s2], p) :> 'r brick
+    let inline lift3 (f : 's1 -> 's2 -> 's3 -> 'r) (s1 : 's1 brick) (s2: 's2 brick) (s3: 's3 brick) =
+        let p (a: obj array) = [f (unbox a.[0]) (unbox a.[1]) (unbox a.[2])]
+        SignalBrick<_>([s1;s2;s3], p) :> 'r brick
 
-let inline signal3 (f : 's1 -> 's2 -> 's3 -> 'r) (s1 : 's1 brick) (s2: 's2 brick) (s3: 's3 brick) =
-    let p (a: obj array) = f (unbox a.[0]) (unbox a.[1]) (unbox a.[2])
-    SignalBrick<_>([s1;s2;s3], p) :> 'r brick
+    (* fold past, Elm inspired *)
 
-(* foldp, Elm inspired *)
+    let foldp (f: 's -> 'v -> 's) (initial: 's) (source: 'v brick) =
+        let state = ref initial
+        let folder value =
+            let s = f (!state) value
+            state := s
+            !state
 
-let foldp (f: 's -> 'v -> 's) (initial: 's) (source: 'v brick) =
-    let state = ref initial
-    let folder value =
-        let s = f (!state) value
-        state := s
-        !state
+        lift folder source
 
-    signal folder source
+    let flatten (source: 'v list brick) =
+        let processor (a: obj array) : 'v list = unbox a.[0] |> List.flatten
+        SignalBrick<_>([source], processor) :> 'v brick
+
+(* Values: continuous values *)
+   
+module Value = 
+
+    let lift (f: 's -> 't) (s: 's brick) =
+        brick {
+            let! s = s
+            return f s
+        }
+
+    let map f s = lift f s
+
+    let lift2 (f: 's1 -> 's2 -> 't) (s1: 's1 brick) (s2: 's2 brick) =
+        brick {
+            let! s1 = s1
+            let! s2 = s2
+            return f s1 s2
+        }
+    
+    let foldp (f: 's -> 'v -> 's) (initial: 's) (source: 'v brick) = 
+        let state = ref initial
+        brick {
+            let! v = source
+            let s = !state
+            let s' = f s v
+            state := s'
+            return s'
+        }
 
 let transaction = new TransactionBuilder()
 
