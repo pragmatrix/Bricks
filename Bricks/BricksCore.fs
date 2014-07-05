@@ -597,7 +597,7 @@ module Signal =
         lift folder source
 
     let flatten (source: 'v list brick) =
-        let processor (a: obj array) : 'v list = unbox a.[0] |> List.flatten
+        let processor (a: obj array) : 'v list = unbox a.[0]
         SignalBrick<_>([source], processor) :> 'v brick
 
 (* Values: continuous values *)
