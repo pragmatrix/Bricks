@@ -65,8 +65,6 @@ type 'v brick =
     inherit Brick
     abstract member evaluateT: unit -> ITramp<'v>
     abstract member value: 'v option
-    abstract member history: 'd brick -> ITramp<History<'d>>
-    abstract member previous: 'd brick -> 'd option
 
 type Mutable<'v> = 
     inherit brick<'v>
@@ -171,12 +169,6 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
         member this.versioned = _versioned :> _
         member this.value = _versioned.value |> snd |> Some
-
-        member this.history (_ : 'd brick) = 
-            failwith "internal error"
-
-        member this.previous (_ : 'd brick) : 'd option = 
-            failwith "internal error"
 
         member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (fun v -> snd v |> box)
 
@@ -297,12 +289,6 @@ type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v list) 
         member this.versioned = _versioned.Value :> Versioned
         member this.value = _versioned |> Option.map(fun v -> snd v.value) 
 
-        member this.history (_ : 'd brick) = 
-            failwith "internal error"
-
-        member this.previous (_ : 'd brick) : 'd option = 
-            failwith "internal error"
-
         member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (snd >> box)
         member this.evaluateT() : ITramp<'v> = eval |> Trampoline.map snd
 
@@ -364,22 +350,6 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
         member this.versioned = _versioned.Value :> Versioned
         member this.value = _versioned |> Option.map(fun v -> snd v.value) 
 
-        member this.history (dep : 'd brick) = 
-            tramp {
-                let! depV = dep.evaluateT()
-                return 
-                    match _trace.get dep with
-                    | None -> Reset depV
-                    | Some (:? Versioned<'d> as v) -> Progress (v.tail |> Seq.map(fun v -> v.value |> snd) |> Seq.toList)
-                    | _ -> failwith "internal error"
-            }
-
-        member this.previous (dep : 'd brick) : 'd option = 
-            match _trace.get dep with
-            | None -> None
-            | Some (:? Versioned<'d> as v) -> Some (snd v.head.value)
-            | _ -> failwith "internal error"
-
         member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (snd >> box)
         member this.evaluateT() : ITramp<'v> = eval |> Trampoline.map snd
 
@@ -392,12 +362,8 @@ let internal makeBrick<'v> f = ComputedBrick<'v>(f) :> 'v brick
 // i want these in a module named Brick
 
 type SelfValueMarker = SelfValueMarker
-type HistoryMarker<'v> = HistoryMarker of 'v brick
-type PreviousMarker<'v> = PreviousMarker of 'v brick
 
 let valueOfSelf = SelfValueMarker
-let inline historyOf b = HistoryMarker b
-let inline previousOf b = PreviousMarker b
 
 type BrickBuilder() =
     member this.Bind (dependency: 'dep brick, cont: 'dep -> Computation<'next>) : Computation<'next> =
@@ -422,25 +388,7 @@ type BrickBuilder() =
             let v = b.value
             cont v b
 
-    member this.Bind (HistoryMarker dep, cont: History<'d> -> Computation<'v>) : Computation<'v> =
-        fun b ->
-            tramp {
-                let! h = b.history dep
-                let! contDep, r = cont h b
-                return dep:>Brick :: contDep, r
-            }
-
-    member this.Bind (PreviousMarker dep, cont: 'd option -> Computation<'v>) : Computation<'v> =
-        fun b ->
-            tramp {
-                // note: we don't add the brick to the list of dependencies.
-                let p = b.previous dep
-                let! contDep, r = cont p b
-                return contDep, r
-            }
-
     member this.Return value = fun _ -> tramp { return [], [value] }
-    member this.Yield value = this.Return value
     
     member this.ReturnFrom (brick: 'value brick) = 
         fun _ ->
@@ -448,20 +396,6 @@ type BrickBuilder() =
                 let! value = brick.evaluateT();
                 return [brick:>Brick], [value]
             }
-
-    member this.YieldFrom (dep: 'dep brick) = this.ReturnFrom dep
-
-    // seeing History as a separate category, we can justify using yield! instead of yield. 
-    // yield can not be overloaded.
-    member this.ReturnFrom (h: History<'v>) =
-        match h with 
-        | Reset v -> this.Return v
-        | Progress p -> fun _ -> tramp { return [], p |> Seq.toList }
-
-    member this.YieldFrom (h: History<'v>) =
-        match h with 
-        | Reset v -> this.Yield v
-        | Progress p -> fun _ -> tramp { return [], p |> Seq.toList }
 
     member this.Combine (first: Computation<'v>, second: Computation<'v>) =
         fun b ->

@@ -7,6 +7,8 @@ open BrickCollections
 
 type cursor = int brick
 
+(*
+
 let cursor (source : IList.change<'e> brick) : cursor = 
     
     let processor index (change, _) =
@@ -28,5 +30,5 @@ let cursor (source : IList.change<'e> brick) : cursor =
             return index
     }
 
-
+*)
     
