@@ -51,53 +51,40 @@ module VersionedExtensions =
 type BeaconNode = 
     | Mutable of Beacon
     | Computed of Beacon * BeaconNode list
+    | Managed of Beacon * BeaconNode
 
 and Brick =
     abstract member versioned : Versioned with get
     abstract member node : BeaconNode
     abstract member evaluateT: unit -> ITramp<obj>
 
-type 'v brick = 
-    inherit Brick
-    abstract member evaluateT: unit -> ITramp<'v>
-    abstract member value: 'v option
-
-type Mutable<'v> = 
-    inherit brick<'v>
-    abstract member write: Tick -> 'v -> unit
-    abstract member reset: Tick -> unit
-
-let private updateNode node = 
+let private propagateInvalidation node = 
 
     // tbd: tramp or use tailcalls to save stack space
 
-    let rec un node notify = 
+    let rec propagate node notify = 
         match node with
-        | Mutable b -> if not b.valid then notify()
+        | Mutable b -> 
+            if not b.valid then notify()
+
         | Computed (b, deps) ->
-        if not b.valid then notify() 
-        else
-        let n() =
-            if (b.valid) then
-                b.valid <- false
-                notify()
+            if not b.valid then notify() else
+            let n() =
+                if (b.valid) then
+                    b.valid <- false
+                    notify()
 
-        deps |> List.iter (fun d -> un d n)
+            deps |> List.iter (fun d -> propagate d n)
 
-    un node id
+        | Managed (b, dep) ->
+            if not b.valid then notify() else
+            let n() = 
+                if (b.valid) then
+                    b.valid <- false
+                    notify()
+            propagate dep n
 
-[<AutoOpen>]
-module BrickExtensions =
-
-    type 'v brick with
-        member this.evaluate() =
-            updateNode this.node
-            this.evaluateT().Run()
-
-        member this.valid = 
-            match this.node with
-            | Mutable b -> b.valid
-            | Computed (b, _) -> b.valid
+    propagate node id
 
 type Versioned<'v> = { value: (Tick * 'v); mutable next: Versioned<'v> option } with
 
@@ -137,6 +124,31 @@ type Versioned<'v> = { value: (Tick * 'v); mutable next: Versioned<'v> option } 
             head.pushSeq rest
             |> Some
 
+type 'v brick = 
+    inherit Brick
+    abstract member versioned : Versioned<'v> 
+    abstract member evaluateT: unit -> ITramp<'v>
+    abstract member value: 'v option
+
+[<AutoOpen>]
+module BrickExtensions =
+
+    type 'v brick with
+        member this.evaluate() =
+            propagateInvalidation this.node
+            this.evaluateT().Run()
+
+        member this.valid = 
+            match this.node with
+            | Mutable b -> b.valid
+            | Computed (b, _) -> b.valid
+            | Managed (b, _) -> b.valid
+
+type Mutable<'v> = 
+    inherit brick<'v>
+    abstract member write: Tick -> 'v -> unit
+    abstract member reset: Tick -> unit
+
 (* Global Tick counter *)
 
 let mutable private CurrentTick = 0L
@@ -163,7 +175,9 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
 
     interface Mutable<'v> with
 
-        member this.versioned = _versioned :> _
+        member this.versioned : Versioned = _versioned :> _
+        member this.versioned : Versioned<'v> = _versioned
+
         member this.value = _versioned.value |> snd |> Some
 
         member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (fun v -> snd v |> box)
@@ -179,6 +193,60 @@ type MutableBrick<'v>(tick: Tick, initial: 'v) =
             beacon.invalidate() 
 
         member this.node = node
+
+
+(** Managed Brick supports a creation, update, and destruction cycle **)
+
+type Managed<'v, 'm> = { create: 'v -> 'm; update: 'm -> 'v -> 'm; destroy: 'm -> unit }
+
+type ManagedBrick<'v, 'm>(source: 'v brick, managed: Managed<'v, 'm>) =
+
+    let beacon = Beacon.create
+    let mutable _node = Computed (beacon, [])
+
+    let mutable _source : 'v Versioned option = None
+    let mutable _managed : 'm Versioned option = None
+
+    let eval = 
+        tramp {
+            let! _ = source.evaluateT()
+            
+            let m = 
+                match _source with
+                | None ->
+                    let (tick, s) = source.versioned.value
+                    let m = managed.create s
+                    let tick = source.versioned.value |> fst
+                    _managed <- Some <| Versioned.single (tick, m)
+                    m
+                | Some sourceV ->
+                    let tail = sourceV.tail
+                    let folder (_, m) v =
+                        let (t, v) = v.value
+                        let m = managed.update m v
+                        (t, m)
+                    let newMs = Seq.scan folder _managed.Value.value tail |> Seq.skip 1
+                    _managed <- Some <| _managed.Value.pushSeq newMs
+                    _managed.Value.value |> snd
+
+            _source <- Some source.versioned
+            _node <- Computed (beacon, [source.node])
+
+            beacon.valid <- true
+            return m
+        }
+
+    interface 'm brick with
+        member this.versioned : Versioned = _managed.Value :> Versioned
+        member this.versioned : Versioned<'m> = _managed.Value
+
+        member this.value = _managed |> Option.map(fun v -> snd v.value) 
+
+        member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map box
+        member this.evaluateT() : ITramp<'m> = eval
+
+        member this.node = _node
+
 
 (** SIGNAL **)
 
@@ -282,7 +350,9 @@ type SignalBrick<'v>(dependencies: Brick list, processor: obj array -> 'v list) 
 
     interface 'v brick with
 
-        member this.versioned = _versioned.Value :> Versioned
+        member this.versioned : Versioned = _versioned.Value :> Versioned
+        member this.versioned : Versioned<'v> = _versioned.Value
+
         member this.value = _versioned |> Option.map(fun v -> snd v.value) 
 
         member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (snd >> box)
@@ -303,7 +373,7 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
     
     let beacon = Beacon.create
     let mutable _node = Computed (beacon, [])
-    let mutable _versioned : ('v Versioned) option = None
+    let mutable _versioned : 'v Versioned option = None
 
     let eval = 
         tramp {
@@ -339,7 +409,8 @@ and ComputedBrick<'v>(computation : Computation<'v>) as self =
 
     interface 'v brick with
 
-        member this.versioned = _versioned.Value :> Versioned
+        member this.versioned : Versioned = _versioned.Value :> Versioned
+        member this.versioned : Versioned<'v> = _versioned.value
         member this.value = _versioned |> Option.map(fun v -> snd v.value) 
 
         member this.evaluateT() : ITramp<obj> = eval |> Trampoline.map (snd >> box)
