@@ -13,7 +13,7 @@ module BSet =
 
     let track (source: 'v iset brick) : 'v ISet.change brick =
 
-        let folder (previous, _) current = current, (ISet.diff previous current)
+        let folder (previous, _) current = current, (ISet.ediff previous current)
 
         Value.foldp folder (ISet.empty, []) source
         |> Signal.map snd

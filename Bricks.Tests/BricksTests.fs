@@ -8,23 +8,68 @@ open Bricks
 [<TestFixture>]
 type BrickTests() =
 
-    let a = brick { return 3 }
-    let b = brick { return 5 }
-    let c = brick {
-        let! a = a
-        let! b = b
-        return a * b
-    }
-    let d = brick { return! c }
-
     [<Test>]
     member this.simpleEvaluation() =
+
+        let a = var 3
+        let b = var 5
+        let c = brick {
+            let! a = a
+            let! b = b
+            return a * b
+        }
 
         let r = c.evaluate()
         r |> should equal 15
 
     [<Test>]
+    member this.dependentEvaluation() =
+        let a = var 3
+        let b = var 5
+        let c = brick {
+            let! a = a
+            let! b = b
+            return a * b
+        }
+
+        c.evaluate() |> should equal 15
+        () |> transaction { write b 4 }
+        c.evaluate() |> should equal 12
+
+
+    [<Test>]
+    member this.sharedEvaluation() =
+        let a = var 3
+        let b = var 5
+        let c = brick {
+            let! a = a
+            let! b = b
+            return a * b
+        }
+        let d = brick { return! c }
+
+        let e = brick {
+            let! c = c
+            let! d = d
+            return c * d
+        }
+
+        e.evaluate() |> should equal 225
+        () |> transaction { write a 4 }
+        e.evaluate() |> should equal 300
+
+    [<Test>]
     member this.returnFromCreatesANewBrick() =
+        let a = var 3
+        let b = var 5
+        let c = brick {
+            let! a = a
+            let! b = b
+            return a * b
+        }
+        let d = brick { return! c }
+
+
         obj.ReferenceEquals(c, d) |> should equal false
 
     [<Test>]

@@ -57,6 +57,7 @@
     <Compile Include="Collections.fs" />
     <Compile Include="Trampoline.fs" />
     <Compile Include="BricksCore.fs" />
+    <Compile Include="BricksProgram.fs" />
     <Compile Include="BrickCollections.fs" />
     <Compile Include="Bricks.fs" />
     <Compile Include="BrickCursor.fs" />

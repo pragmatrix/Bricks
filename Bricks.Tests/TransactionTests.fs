@@ -83,17 +83,12 @@ type TransactionTests() =
         rt()
         c.evaluate() |> should equal 15
 
-(*        
-    [<Test>]
-    member this.aWriteCanNotBeInvalidated() =
-        let a = brick { return 3 }
+    [<Test>][<ExpectedException>]
+    member this.aComputedBrickCanNotBeInvalidated() =
+        let a = var 3
         let b = brick { 
             let! a = a 
             return a * 2}
 
         b.evaluate() |> should equal 6
         (transaction { write b 4 })()
-        b.evaluate() |> should equal 4
-        (transaction { write a 0 })()
-        b.evaluate() |> should equal 4
-*)

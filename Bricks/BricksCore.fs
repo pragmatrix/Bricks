@@ -16,7 +16,7 @@ open Trampoline
 #nowarn "0346" // for Beacon.GetHashCode()
 
 [<CustomEquality>][<CustomComparison>]
-type Beacon = { mutable valid: bool }
+type Beacon = { mutable valid: bool; mutable tag: obj }
     with
         interface IComparable with
             member this.CompareTo other =
@@ -27,7 +27,7 @@ type Beacon = { mutable valid: bool }
 
         member this.invalidate() = this.valid <- false
 
-        static member create = { valid = false }
+        static member create = { valid = false; tag = null }
 
 type Tick = int64
 
@@ -51,7 +51,7 @@ module VersionedExtensions =
 type Node = 
     | Mutable
     | Computed of BeaconNode list
-    | Managed of BeaconNode
+    | Managed of BeaconNode * (unit -> unit)
 
 and BeaconNode = Beacon * Node
 
@@ -62,28 +62,36 @@ type Brick =
 
 let private propagateInvalidation beaconNode = 
 
-    // tbd: tramp or use tailcalls to save stack space
+    let tag = obj()
 
-    let rec propagate (beacon, node) notify = 
-        if not beacon.valid then notify() else
-        match node with
-        | Mutable -> ()
-        | Computed deps ->
-            let n() =
-                if (beacon.valid) then
-                    beacon.valid <- false
+    let nest beacon notify = 
+        fun () ->
+            if (beacon.valid) then
+                beacon.valid <- false
+                notify()
+
+    let rec propagate todo =
+        match todo with
+        | [] -> ()
+        | (_, [])::rest -> propagate rest
+        | (notify, (beacon, node) :: rest) :: rest2 ->
+            let rest = ((notify, rest)::rest2)
+            if beacon.tag = tag then
+                propagate rest 
+            else
+                beacon.tag <- tag
+                if not beacon.valid then 
                     notify()
+                match node with
+                | Mutable -> propagate rest
+                | Managed (dep, _) ->
+                    let n = nest beacon notify
+                    propagate ((n, [dep])::rest)
+                | Computed deps ->
+                    let n = nest beacon notify
+                    propagate ((n, deps)::rest)          
 
-            deps |> List.iter (fun d -> propagate d n)
-
-        | Managed dep ->
-            let n() = 
-                if (beacon.valid) then
-                    beacon.valid <- false
-                    notify()
-            propagate dep n
-
-    propagate beaconNode id
+    propagate [id, [beaconNode]]
 
 type Versioned<'v> = { value: (Tick * 'v); mutable next: Versioned<'v> option } with
 
@@ -204,6 +212,12 @@ type ManagedBrick<'v, 'm>(source: 'v brick, managed: Managed<'v, 'm>) =
     let mutable _source : 'v Versioned option = None
     let mutable _managed : 'm Versioned option = None
 
+    // note: the current lifetime management algorithm requires that the destructor does not
+    // over the lifetime of the brick and beacon!
+
+    let destructor() =
+        managed.destroy (_managed.Value.value |> snd)
+
     let eval = 
         tramp {
             let! _ = source.evaluateT()
@@ -226,11 +240,12 @@ type ManagedBrick<'v, 'm>(source: 'v brick, managed: Managed<'v, 'm>) =
                     _managed.Value.value |> snd
 
             _source <- Some source.versioned
-            _node <- Some <| (beacon, Managed source.node)
+            _node <- Some <| (beacon, Managed (source.node, destructor))
             beacon.valid <- true
 
             return m
         }
+
 
     interface 'm brick with
         member this.versioned : Versioned = _managed.Value :> Versioned
@@ -531,17 +546,6 @@ type TransactionBuilder() =
                 return (fun time -> m.reset time) :: state
             }
 
-(* PROGRAM *)
-
-type 'v program(root : 'v brick) =
-            
-    interface IDisposable with
-        member this.Dispose() = ()
-
-    member this.run() = root.evaluate()
-
-    member this.apply(t: Transaction) = t()
-
 let var v = MutableBrick<'v>(CurrentTick, v) :> 'v brick
 
 (* Signal: discrete values *)
@@ -609,6 +613,6 @@ module Value =
 let transaction = new TransactionBuilder()
 
 let valueOf (brick : 'v brick) = if brick.valid then brick.value else None
-let toProgram b = new (_ program)(b)
+
     
 [<assembly:AutoOpen("BricksCore")>] ()

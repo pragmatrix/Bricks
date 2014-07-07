@@ -41,16 +41,21 @@ module ISet =
         let apply (_, v) c = c, apply c v
         Seq.scan apply (Reset initial, initial) changes |> Seq.skip 1
 
-    let diff (s1: 'e iset) (s2 : 'e iset) = 
+    let diff (s1: 'e iset) (s2: 'e iset) =
         let added = 
             s2
             |> Seq.filter (s1.has >> not)
-            |> Seq.map Added
 
         let removed = 
             s1 
             |> Seq.filter (s2.has >> not)
-            |> Seq.map Removed
+
+        removed, added
+
+    let ediff (s1: 'e iset) (s2 : 'e iset) =
+        let removed, added = diff s1 s2
+        let removed = removed |> Seq.map Removed
+        let added = added |> Seq.map Added
 
         [removed; added] |> Seq.flatten |> materialize s1 |> Seq.toList
         
