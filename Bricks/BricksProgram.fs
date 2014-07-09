@@ -4,6 +4,7 @@ open System
 
 open Collections
 open BricksCore
+open System.Collections.Generic
 
 let private managedBeaconsAndDestructors node =
     let tag = obj()
@@ -65,9 +66,9 @@ type 'v program(root : 'v brick) =
                 |> Seq.toList
                 |> List.rev
                 |> List.iter (fun (_, destructor) -> destructor())
-            removed |> Seq.fold (fun (map:LiveMap) beacon -> map.Remove beacon) liveMap
-
-        let addActive managedTick liveMap = 
+            liveMap.RemoveRange removed 
+            
+        let addActive managedTick (liveMap : LiveMap) = 
 
             let nextnextTick = managedTick + int64(added.Length)
             let newTicks = 
@@ -76,8 +77,9 @@ type 'v program(root : 'v brick) =
 
             let addedWithTick = 
                 List.zip added newTicks
-                |> List.map (fun (b, t) -> (b, (t, activeDestructors.[b])) )
-            let newLiveMap = addedWithTick |> Seq.fold (fun (map:LiveMap) v -> map.Add(v)) liveMap
+                |> List.map (fun (b, t) -> KeyValuePair(b, (t, activeDestructors.[b])) )
+
+            let newLiveMap = addedWithTick |> liveMap.AddRange
             nextnextTick, newLiveMap
 
 
@@ -88,15 +90,6 @@ type 'v program(root : 'v brick) =
 
         _liveSet <- activeSet
         assert (_liveSet.Count = _liveMap.Count)
-
-
-        
-
-
-
-        
-        
-        
         
     member this.apply(t: Transaction) = t()
 

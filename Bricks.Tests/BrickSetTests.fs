@@ -46,7 +46,6 @@ type BrickSetTests() =
         let d = ISet.ediff s1 s2
         d |> Seq.map fst |> should equal [ISet.Removed v2; ISet.Added v3]
 
-         
     [<Test>]
     member this.setNoDiff() =
         let v1 = new obj()
