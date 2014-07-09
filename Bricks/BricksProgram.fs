@@ -47,11 +47,11 @@ type 'v program(root : 'v brick) =
         let result = root.evaluate()
         let rootNode = root.node
         let live = managedBeaconsAndDestructors rootNode
-        this.updateLive live
+        this.updateLiveBricks live
         result
        
         
-    member this.updateLive active =
+    member private this.updateLiveBricks active =
         let activeSet = active |> Seq.map fst |> ISet.ofSeq
         let activeDestructors = active |> IMap.ofSeq
 
