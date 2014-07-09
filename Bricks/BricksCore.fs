@@ -610,6 +610,9 @@ module Value =
             return s'
         }
 
+    let manage (create : 'v -> 'm) (update: 'm -> 'v -> 'm) (destroy: 'm -> unit ) (source : 'v brick) =
+        ManagedBrick(source, { create = create; update = update; destroy = destroy }) :> 'm brick
+
 let transaction = new TransactionBuilder()
 
 let valueOf (brick : 'v brick) = if brick.valid then brick.value else None
